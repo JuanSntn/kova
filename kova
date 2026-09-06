@@ -1,0 +1,256 @@
+import axios from 'axios'
+import { useState } from 'react'
+
+import { AppAlert } from '@/components/feedback/app-alert'
+import { PageHeader } from '@/components/layout/page-header'
+import { Can } from '@/features/permissions/can'
+import {
+  cancelSubscription,
+  createBillingPortal,
+  createCheckout,
+  getBillingSummary,
+  reactivateSubscription,
+  type PlanCode,
+} from '@/features/billing/api'
+import { BillingDetailsPage } from '@/pages/billing/billing-details-page'
+import { PlansPage } from '@/pages/billing/plans-page'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { queryKeys } from '@/lib/query-keys'
+import { useSession } from '@/features/auth/session-context'
+import { useNavigate } from '@tanstack/react-router'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
+import { ExternalLinkIcon } from 'lucide-react'
+
+type BillingView = 'details' | 'plans'
+type PaidPlanCode = Exclude<PlanCode, 'free'>
+type PendingAction =
+  | PlanCode
+  | 'portal'
+  | 'cancel'
+  | 'reactivate'
+  | null
+
+export function BillingPage() {
+  const navigate = useNavigate()
+  const { activeTenant } = useSession()
+  const queryClient = useQueryClient()
+  const tenantId = activeTenant?.id ?? ''
+  const tenantSlug = activeTenant?.slug ?? ''
+  const [view, setView] = useState<BillingView>('details')
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [pending, setPending] = useState<PendingAction>(null)
+  const [planToConfirm, setPlanToConfirm] = useState<PaidPlanCode | null>(null)
+  const [errorMessageState, setErrorMessageState] = useState<string | null>(null)
+
+  const {
+    data: summary,
+    isPending,
+  } = useQuery({
+    queryKey: queryKeys.billing(tenantId),
+    queryFn: getBillingSummary,
+    enabled: Boolean(tenantId),
+  })
+
+  function handleViewChange(nextView: BillingView) {
+    setPlanToConfirm(null)
+    setView(nextView)
+    navigate({
+      to: '/$tenantSlug/billing',
+      params: { tenantSlug },
+      search: { view: nextView === 'plans' ? 'plans' as const : undefined },
+    })
+  }
+
+  async function handleCheckout(plan: PaidPlanCode, confirmed = false) {
+    const changingPaidPlan =
+      summary?.current_subscription?.plan !== undefined &&
+      summary.current_subscription.plan !== 'free'
+
+    if (changingPaidPlan && !confirmed) {
+      setPlanToConfirm(plan)
+      return
+    }
+
+    setPending(plan)
+    setPlanToConfirm(null)
+    clearFeedback()
+
+    try {
+      const { url } = await createCheckout(plan)
+      window.location.assign(url)
+    } catch (requestError) {
+      setErrorMessageState(errorMessage(requestError))
+      setPending(null)
+    }
+  }
+
+  async function handlePortal() {
+    setPending('portal')
+    clearFeedback()
+
+    try {
+      const { url } = await createBillingPortal()
+      window.location.assign(url)
+    } catch (requestError) {
+      setErrorMessageState(errorMessage(requestError))
+      setPending(null)
+    }
+  }
+
+  async function handleSubscriptionAction(action: 'cancel' | 'reactivate') {
+    setPending(action)
+    clearFeedback()
+
+    try {
+      const response =
+        action === 'cancel'
+          ? await cancelSubscription()
+          : await reactivateSubscription()
+      setSuccessMessage(response.message)
+      await queryClient.invalidateQueries({ queryKey: queryKeys.billing(tenantId) })
+    } catch (requestError) {
+      setErrorMessageState(errorMessage(requestError))
+    } finally {
+      setPending(null)
+    }
+  }
+
+  function clearFeedback() {
+    setErrorMessageState(null)
+    setSuccessMessage(null)
+  }
+
+  if (isPending && !summary) {
+    return (
+      <>
+        <PageHeader title="Facturación" description="Administra tu plan y método de pago." />
+        <Skeleton className="h-96 w-full" />
+      </>
+    )
+  }
+
+  return (
+    <>
+      <PageHeader
+        title={view === 'plans' ? 'Planes' : 'Facturación'}
+        description={
+          view === 'plans'
+            ? 'Elige el plan que mejor se adapta a tu operación.'
+            : 'Administra tu plan, método de pago y facturas.'
+        }
+        actions={
+          summary?.stripe.customer_exists && view !== 'plans' ? (
+            <Can ability="billing.manage">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending !== null}
+                onClick={handlePortal}
+              >
+                <ExternalLinkIcon aria-hidden />
+                {pending === 'portal' ? 'Abriendo...' : 'Administrar en Stripe'}
+              </Button>
+            </Can>
+          ) : undefined
+        }
+      />
+
+      <nav
+        aria-label="Secciones de suscripción"
+        className="-mb-px flex gap-5 border-b"
+      >
+        <BillingNavButton
+          active={view !== 'plans'}
+          onClick={() => handleViewChange('details')}
+        >
+          Facturación
+        </BillingNavButton>
+        <BillingNavButton
+          active={view === 'plans'}
+          onClick={() => handleViewChange('plans')}
+        >
+          Planes
+        </BillingNavButton>
+      </nav>
+
+      <div className="space-y-3">
+        {successMessage && (
+          <AppAlert variant="success" title="Operación exitosa">
+            {successMessage}
+          </AppAlert>
+        )}
+
+        {errorMessageState && (
+          <AppAlert variant="error" title="No fue posible completar la operación">
+            {errorMessageState}
+          </AppAlert>
+        )}
+
+        {view !== 'plans' ? (
+          <BillingDetailsPage
+            onCancel={() => void handleSubscriptionAction('cancel')}
+            onOpenPortal={() => void handlePortal()}
+            onReactivate={() => void handleSubscriptionAction('reactivate')}
+            onViewPlans={() => handleViewChange('plans')}
+            pending={pending}
+            summary={summary ?? null}
+          />
+        ) : (
+          <PlansPage
+            onCancelConfirmation={() => setPlanToConfirm(null)}
+            onConfirmPlan={(plan) => void handleCheckout(plan, true)}
+            onSelectPlan={(plan) => void handleCheckout(plan)}
+            pendingPlan={
+              pending === 'free' ||
+              pending === 'business' ||
+              pending === 'restaurant'
+                ? pending
+                : null
+            }
+            planToConfirm={planToConfirm}
+            summary={summary ?? null}
+          />
+        )}
+      </div>
+    </>
+  )
+}
+
+function BillingNavButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean
+  children: React.ReactNode
+  onClick: () => void
+}) {
+  return (
+    <button
+      aria-current={active ? 'page' : undefined}
+      className={[
+        'border-b-2 px-0 py-2.5 text-xs font-medium transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+        active
+          ? 'border-primary text-foreground'
+          : 'border-transparent text-muted-foreground hover:text-foreground',
+      ].join(' ')}
+      type="button"
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  )
+}
+
+function errorMessage(error: unknown) {
+  if (axios.isAxiosError(error)) {
+    return (
+      error.response?.data?.message ??
+      'Revisa tu conexión e intenta nuevamente.'
+    )
+  }
+
+  return 'Ocurrió un error inesperado.'
+}
