@@ -6,8 +6,20 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /*
+   * -------------------------------------------------------
+   * TYPOGRAPHY
+   * -------------------------------------------------------
+   */
+
   --font-heading: var(--font-sans);
   --font-sans: "Geist Variable", sans-serif;
+
+  /*
+   * -------------------------------------------------------
+   * SIDEBAR
+   * -------------------------------------------------------
+   */
 
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -18,11 +30,23 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
 
+  /*
+   * -------------------------------------------------------
+   * CHARTS
+   * -------------------------------------------------------
+   */
+
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
+
+  /*
+   * -------------------------------------------------------
+   * SYSTEM COLORS
+   * -------------------------------------------------------
+   */
 
   --color-ring: var(--ring);
   --color-input: var(--input);
@@ -50,8 +74,22 @@
   --color-foreground: var(--foreground);
   --color-background: var(--background);
 
+  /*
+   * -------------------------------------------------------
+   * KOVA BRAND
+   * -------------------------------------------------------
+   */
+
   --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
   --color-brand-soft: var(--brand-soft);
+  --color-brand-soft-foreground: var(--brand-soft-foreground);
+
+  /*
+   * -------------------------------------------------------
+   * RADIUS
+   * -------------------------------------------------------
+   */
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -62,68 +100,118 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * =======================================================
+ * LIGHT MODE
+ * =======================================================
+ */
+
 :root {
+  /*
+   * -------------------------------------------------------
+   * KOVA PALETTE
+   * -------------------------------------------------------
+   *
+   * Naranja principal:    #E86A1D
+   * Naranja hover:        #D75B0F
+   * Naranja suave:        #FFF2E8
+   *
+   * Fondo general:        #F7F7F8
+   * Card:                 #FFFFFF
+   * Sidebar:              #FAFAFB
+   *
+   * Texto principal:      #202024
+   * Texto secundario:     #71717A
+   *
+   * Border:               #E6E6E9
+   *
+   * -------------------------------------------------------
+   */
+
   /*
    * -------------------------------------------------------
    * BASE
    * -------------------------------------------------------
    */
 
-  --background: oklch(0.985 0.002 60);
-  --foreground: oklch(0.18 0.008 40);
-
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.008 40);
-
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.008 40);
+  --background: #f7f7f8;
+  --foreground: #202024;
 
   /*
    * -------------------------------------------------------
-   * PRIMARY / BRAND
+   * CARDS
    *
-   * Naranja principal:
-   * HEX: #E25D33
-   * RGB: 226 93 51
-   * OKLCH: 64.2% 0.175 37.6
+   * Las tarjetas siempre son blancas.
    * -------------------------------------------------------
    */
 
-  --primary: oklch(64.2% 0.175 37.6);
-  --primary-foreground: oklch(0.99 0 0);
+  --card: #ffffff;
+  --card-foreground: #202024;
+
+  /*
+   * -------------------------------------------------------
+   * POPOVER / DROPDOWN
+   * -------------------------------------------------------
+   */
+
+  --popover: #ffffff;
+  --popover-foreground: #202024;
+
+  /*
+   * -------------------------------------------------------
+   * PRIMARY
+   *
+   * Naranja Kova.
+   *
+   * Úsalo para:
+   * - CTA
+   * - Cobrar
+   * - Guardar
+   * - Crear
+   * - categorías seleccionadas
+   * - acciones principales
+   *
+   * -------------------------------------------------------
+   */
+
+  --primary: #e86a1d;
+  --primary-foreground: #ffffff;
 
   /*
    * -------------------------------------------------------
    * SECONDARY
    *
-   * Neutro para botones secundarios.
+   * Botones secundarios completamente neutros.
    * -------------------------------------------------------
    */
 
-  --secondary: oklch(0.96 0.004 60);
-  --secondary-foreground: oklch(0.22 0.008 40);
+  --secondary: #f3f3f4;
+  --secondary-foreground: #27272a;
 
   /*
    * -------------------------------------------------------
    * MUTED
+   *
+   * Fondos secundarios y textos poco importantes.
    * -------------------------------------------------------
    */
 
-  --muted: oklch(0.96 0.004 60);
-  --muted-foreground: oklch(0.52 0.012 40);
+  --muted: #f3f3f4;
+  --muted-foreground: #71717a;
 
   /*
    * -------------------------------------------------------
    * ACCENT
    *
-   * Importante:
-   * NO usamos naranja aquí para que hover, dropdowns,
-   * command menus y sidebar no se vuelvan naranjas.
+   * Neutro.
+   *
+   * Dropdowns, hover y command menu NO deben convertirse
+   * en superficies naranjas.
    * -------------------------------------------------------
    */
 
-  --accent: oklch(0.95 0.005 60);
-  --accent-foreground: oklch(0.22 0.008 40);
+  --accent: #f1f1f2;
+  --accent-foreground: #202024;
 
   /*
    * -------------------------------------------------------
@@ -131,84 +219,108 @@
    * -------------------------------------------------------
    */
 
-  --destructive: oklch(0.58 0.23 27);
+  --destructive: #dc2626;
 
   /*
    * -------------------------------------------------------
-   * INPUTS / BORDERS
+   * BORDER / INPUT
    * -------------------------------------------------------
    */
 
-  --border: oklch(0.90 0.006 60);
-  --input: oklch(0.90 0.006 60);
+  --border: #e6e6e9;
+  --input: #dedee3;
 
   /*
-   * Ring ligeramente relacionado con la marca,
-   * pero menos saturado que el botón.
+   * -------------------------------------------------------
+   * FOCUS RING
+   * -------------------------------------------------------
    */
 
-  --ring: oklch(0.64 0.10 37.6);
+  --ring: #e86a1d;
 
   /*
    * -------------------------------------------------------
    * CHARTS
+   *
+   * Los charts sí pueden tener más variedad.
    * -------------------------------------------------------
    */
 
-  --chart-1: oklch(64.2% 0.175 37.6);
-  --chart-2: oklch(0.64 0.12 145);
-  --chart-3: oklch(0.60 0.11 230);
-  --chart-4: oklch(0.72 0.12 85);
-  --chart-5: oklch(0.55 0.08 300);
+  --chart-1: #e86a1d;
+  --chart-2: #3b82f6;
+  --chart-3: #22a06b;
+  --chart-4: #8b5cf6;
+  --chart-5: #eab308;
 
   /*
    * -------------------------------------------------------
    * RADIUS
+   *
+   * Redondeo moderno pero no exagerado.
    * -------------------------------------------------------
    */
 
-  --radius: 0.625rem;
+  --radius: 0.75rem;
 
   /*
    * -------------------------------------------------------
    * SIDEBAR
    *
-   * Sidebar neutral.
-   * No queremos una gran superficie naranja.
-   * -------------------------------------------------------
-   */
-
-  --sidebar: oklch(0.975 0.003 60);
-  --sidebar-foreground: oklch(0.20 0.008 40);
-
-  --sidebar-primary: oklch(0.22 0.008 40);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-
-  --sidebar-accent: oklch(0.94 0.005 60);
-  --sidebar-accent-foreground: oklch(0.20 0.008 40);
-
-  --sidebar-border: oklch(0.90 0.006 60);
-  --sidebar-ring: oklch(0.64 0.10 37.6);
-
-  /*
-   * -------------------------------------------------------
-   * BRAND TOKENS
-   * -------------------------------------------------------
-   */
-
-  --brand: oklch(64.2% 0.175 37.6);
-
-  /*
-   * Fondo suave relacionado con el naranja.
-   * Úsalo únicamente cuando quieras pequeños detalles:
+   * Casi blanco.
    *
+   * El sidebar no compite con el POS.
+   * -------------------------------------------------------
+   */
+
+  --sidebar: #fafafb;
+  --sidebar-foreground: #27272a;
+
+  /*
+   * Elementos primary internos del sidebar.
+   */
+
+  --sidebar-primary: #27272a;
+  --sidebar-primary-foreground: #ffffff;
+
+  /*
+   * Item activo / hover.
+   *
+   * Neutral para evitar nuevamente el efecto crema.
+   */
+
+  --sidebar-accent: #f1f1f2;
+  --sidebar-accent-foreground: #202024;
+
+  --sidebar-border: #e6e6e9;
+  --sidebar-ring: #e86a1d;
+
+  /*
+   * -------------------------------------------------------
+   * KOVA BRAND TOKENS
+   * -------------------------------------------------------
+   */
+
+  --brand: #e86a1d;
+  --brand-hover: #d75b0f;
+
+  /*
+   * Úsalo sólo en pequeñas superficies.
+   *
+   * Ejemplo:
    * bg-brand-soft
    *
-   * No como fondo general.
+   * NO utilizar como fondo general.
    */
 
-  --brand-soft: oklch(0.955 0.025 45);
+  --brand-soft: #fff2e8;
+  --brand-soft-foreground: #b94709;
 }
+
+/*
+ * =======================================================
+ * DARK MODE
+ * =======================================================
+ */
 
 .dark {
   /*
@@ -217,26 +329,37 @@
    * -------------------------------------------------------
    */
 
-  --background: oklch(0.145 0.006 40);
-  --foreground: oklch(0.96 0.004 60);
+  --background: #121214;
+  --foreground: #f4f4f5;
 
-  --card: oklch(0.19 0.007 40);
-  --card-foreground: oklch(0.96 0.004 60);
+  /*
+   * -------------------------------------------------------
+   * CARDS
+   * -------------------------------------------------------
+   */
 
-  --popover: oklch(0.19 0.007 40);
-  --popover-foreground: oklch(0.96 0.004 60);
+  --card: #19191c;
+  --card-foreground: #f4f4f5;
+
+  /*
+   * -------------------------------------------------------
+   * POPOVER
+   * -------------------------------------------------------
+   */
+
+  --popover: #19191c;
+  --popover-foreground: #f4f4f5;
 
   /*
    * -------------------------------------------------------
    * PRIMARY
    *
-   * Un poco más claro en dark mode para conservar
-   * contraste y presencia.
+   * Un poco más luminoso en dark mode.
    * -------------------------------------------------------
    */
 
-  --primary: oklch(68% 0.175 37.6);
-  --primary-foreground: oklch(0.99 0 0);
+  --primary: #f0782d;
+  --primary-foreground: #ffffff;
 
   /*
    * -------------------------------------------------------
@@ -244,8 +367,8 @@
    * -------------------------------------------------------
    */
 
-  --secondary: oklch(0.245 0.008 40);
-  --secondary-foreground: oklch(0.96 0.004 60);
+  --secondary: #27272a;
+  --secondary-foreground: #f4f4f5;
 
   /*
    * -------------------------------------------------------
@@ -253,8 +376,8 @@
    * -------------------------------------------------------
    */
 
-  --muted: oklch(0.235 0.008 40);
-  --muted-foreground: oklch(0.68 0.012 50);
+  --muted: #252528;
+  --muted-foreground: #a1a1aa;
 
   /*
    * -------------------------------------------------------
@@ -262,8 +385,8 @@
    * -------------------------------------------------------
    */
 
-  --accent: oklch(0.255 0.008 40);
-  --accent-foreground: oklch(0.96 0.004 60);
+  --accent: #29292d;
+  --accent-foreground: #fafafa;
 
   /*
    * -------------------------------------------------------
@@ -271,17 +394,24 @@
    * -------------------------------------------------------
    */
 
-  --destructive: oklch(0.65 0.20 25);
+  --destructive: #ef4444;
 
   /*
    * -------------------------------------------------------
-   * BORDERS / INPUTS
+   * BORDER / INPUT
    * -------------------------------------------------------
    */
 
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.68 0.12 37.6);
+  --border: rgb(255 255 255 / 10%);
+  --input: rgb(255 255 255 / 14%);
+
+  /*
+   * -------------------------------------------------------
+   * RING
+   * -------------------------------------------------------
+   */
+
+  --ring: #f0782d;
 
   /*
    * -------------------------------------------------------
@@ -289,11 +419,11 @@
    * -------------------------------------------------------
    */
 
-  --chart-1: oklch(68% 0.175 37.6);
-  --chart-2: oklch(0.70 0.13 145);
-  --chart-3: oklch(0.68 0.12 230);
-  --chart-4: oklch(0.75 0.13 85);
-  --chart-5: oklch(0.68 0.10 300);
+  --chart-1: #f0782d;
+  --chart-2: #60a5fa;
+  --chart-3: #4ade80;
+  --chart-4: #a78bfa;
+  --chart-5: #facc15;
 
   /*
    * -------------------------------------------------------
@@ -301,27 +431,36 @@
    * -------------------------------------------------------
    */
 
-  --sidebar: oklch(0.175 0.007 40);
-  --sidebar-foreground: oklch(0.96 0.004 60);
+  --sidebar: #161618;
+  --sidebar-foreground: #f4f4f5;
 
-  --sidebar-primary: oklch(0.92 0.004 60);
-  --sidebar-primary-foreground: oklch(0.18 0.008 40);
+  --sidebar-primary: #f4f4f5;
+  --sidebar-primary-foreground: #18181b;
 
-  --sidebar-accent: oklch(0.235 0.008 40);
-  --sidebar-accent-foreground: oklch(0.96 0.004 60);
+  --sidebar-accent: #252528;
+  --sidebar-accent-foreground: #fafafa;
 
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.68 0.12 37.6);
+  --sidebar-border: rgb(255 255 255 / 8%);
+  --sidebar-ring: #f0782d;
 
   /*
    * -------------------------------------------------------
-   * BRAND
+   * KOVA BRAND
    * -------------------------------------------------------
    */
 
-  --brand: oklch(68% 0.175 37.6);
-  --brand-soft: oklch(0.245 0.04 37.6);
+  --brand: #f0782d;
+  --brand-hover: #fb8c46;
+
+  --brand-soft: #352116;
+  --brand-soft-foreground: #ffb17c;
 }
+
+/*
+ * =======================================================
+ * BASE STYLES
+ * =======================================================
+ */
 
 @layer base {
   * {
@@ -340,9 +479,14 @@
     @apply bg-background text-foreground antialiased;
   }
 
+  /*
+   * Selección de texto con un toque muy sutil
+   * del naranja Kova.
+   */
+
   ::selection {
     background: color-mix(in oklab,
-        var(--brand) 24%,
+        var(--brand) 22%,
         transparent);
   }
 }

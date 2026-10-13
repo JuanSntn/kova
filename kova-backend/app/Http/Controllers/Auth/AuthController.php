@@ -3,12 +3,12 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Domain\Auth\Actions\RegisterTenant;
-use App\Enums\MembershipStatus;
-use App\Enums\PermissionName;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\RegisterRequest;
 use App\Models\User;
+use App\Services\EmailVerificationService;
+use App\Services\Auth\SessionPayloadService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -20,6 +20,7 @@ class AuthController extends Controller
     public function register(
         RegisterRequest $request,
         RegisterTenant $registerTenant,
+        EmailVerificationService $verification,
     ): JsonResponse {
         ['user' => $user, 'tenant' => $tenant] = $registerTenant->handle(
             name: $request->string('name')->toString(),
@@ -28,14 +29,15 @@ class AuthController extends Controller
             businessName: $request->string('business_name')->toString(),
         );
 
-        try {
-            $user->sendEmailVerificationNotification();
-        } catch (\Throwable $exception) {
-            report($exception);
+        $verification->remember($request, $user);
+        $delivery = $verification->send($user);
+        if ($request->hasSession()) {
+            $request->session()->put('email_verification.delivery', $delivery['delivery']);
         }
 
         return response()->json([
-            'message' => 'Cuenta creada. Revisa tu correo para verificarla antes de iniciar sesión.',
+            'message' => 'Cuenta creada. '.$verification->message($delivery['delivery']),
+            'delivery' => $delivery['delivery'],
             'email' => $user->email,
             'tenant' => [
                 'id' => $tenant->public_id,
@@ -44,7 +46,7 @@ class AuthController extends Controller
         ], 201);
     }
 
-    public function login(LoginRequest $request): JsonResponse
+    public function login(LoginRequest $request, EmailVerificationService $verification, SessionPayloadService $payloads): JsonResponse
     {
         $user = User::query()
             ->where('email', $request->string('email')->toString())
@@ -57,6 +59,7 @@ class AuthController extends Controller
         }
 
         if (! $user->hasVerifiedEmail()) {
+            $verification->remember($request, $user);
             return response()->json([
                 'message' => 'Debes verificar tu correo antes de iniciar sesión.',
                 'code' => 'email_unverified',
@@ -64,15 +67,16 @@ class AuthController extends Controller
             ], 403);
         }
 
+        $request->session()->forget('email_verification');
         Auth::login($user, $request->boolean('remember'));
         $request->session()->regenerate();
 
-        return response()->json($this->sessionPayload($user));
+        return response()->json($payloads->build($user));
     }
 
-    public function me(Request $request): JsonResponse
+    public function me(Request $request, SessionPayloadService $payloads): JsonResponse
     {
-        return response()->json($this->sessionPayload($request->user()));
+        return response()->json($payloads->build($request->user()));
     }
 
     public function logout(Request $request): JsonResponse
@@ -87,51 +91,4 @@ class AuthController extends Controller
         ]);
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    private function sessionPayload(User $user): array
-    {
-        $tenants = $user->tenants()
-            ->wherePivot('status', MembershipStatus::Active->value)
-            ->where('tenants.status', 'active')
-            ->orderBy('tenants.name')
-            ->get(['tenants.id', 'tenants.public_id', 'tenants.name', 'tenants.slug']);
-
-        $previousPermissionsTenantId = getPermissionsTeamId();
-
-        try {
-            $tenantPayload = $tenants->map(function ($tenant) use ($user) {
-                setPermissionsTeamId($tenant->getKey());
-                $user->unsetRelation('roles');
-                $user->unsetRelation('permissions');
-
-                $abilities = collect(PermissionName::cases())->filter(
-                    fn (PermissionName $permission) => $user->can($permission->value),
-                )->map(
-                    fn (PermissionName $permission) => $permission->value,
-                )->values();
-
-                return [
-                    'id' => $tenant->public_id,
-                    'name' => $tenant->name,
-                    'slug' => $tenant->slug,
-                    'abilities' => $abilities,
-                ];
-            })->values();
-
-            return [
-                'user' => [
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'email_verified_at' => $user->email_verified_at,
-                ],
-                'tenants' => $tenantPayload,
-            ];
-        } finally {
-            $user->unsetRelation('roles');
-            $user->unsetRelation('permissions');
-            setPermissionsTeamId($previousPermissionsTenantId);
-        }
-    }
 }

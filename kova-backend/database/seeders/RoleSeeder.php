@@ -30,9 +30,14 @@ class RoleSeeder extends Seeder
         foreach (RoleName::cases() as $roleName) {
             $role = Role::findOrCreate($roleName->value, 'web');
 
-            $role->syncPermissions(
-                $roleName === RoleName::Owner ? $permissions : [],
-            );
+            $names = match ($roleName) {
+                RoleName::Owner => $permissions->pluck('name')->all(),
+                RoleName::Cashier => [PermissionName::CashView->value, PermissionName::CashOperate->value, PermissionName::OrdersCreate->value],
+                RoleName::Waiter => [PermissionName::OrdersCreate->value],
+                RoleName::Kitchen, RoleName::Bar => [PermissionName::PreparationView->value, PermissionName::PreparationManage->value],
+                default => [],
+            };
+            $role->syncPermissions($names);
         }
     }
 }

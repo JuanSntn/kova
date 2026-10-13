@@ -17,11 +17,10 @@ type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
   isNavigationPending: boolean
   navigationSections: NavigationSection[]
   onLogout: () => void
-  onTenantChange: (tenant: TenantSummary) => void
   tenants: TenantSummary[]
   user: {
     name: string
-    email: string
+    email: string | null
   }
 }
 
@@ -30,7 +29,6 @@ export function AppSidebar({
   isNavigationPending,
   navigationSections,
   onLogout,
-  onTenantChange,
   tenants,
   user,
   ...props
@@ -38,13 +36,22 @@ export function AppSidebar({
   const activeTenant =
     tenants.find((tenant) => tenant.id === activeTenantId) ?? tenants[0]
 
+  const billingNavigationItem = navigationSections
+    .flatMap((section) => section.items)
+    .find((item) => item.key === 'billing')
+
+  const mainNavigationSections = navigationSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => item.key !== 'billing'),
+    }))
+    .filter((section) => section.items.length > 0)
+
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
         <TeamSwitcher
           activeTenant={activeTenant}
-          onTenantChange={onTenantChange}
-          tenants={tenants}
         />
       </SidebarHeader>
       <SidebarContent>
@@ -58,13 +65,18 @@ export function AppSidebar({
           </SidebarGroup>
         ) : (
           <NavMain
-            sections={navigationSections}
+            sections={mainNavigationSections}
             tenantSlug={activeTenant?.slug ?? ''}
           />
         )}
       </SidebarContent>
       <SidebarFooter>
-        <NavUser onLogout={onLogout} user={user} />
+        <NavUser
+          canAccessBilling={Boolean(billingNavigationItem)}
+          onLogout={onLogout}
+          tenantSlug={activeTenant?.slug ?? ''}
+          user={user}
+        />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

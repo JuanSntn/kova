@@ -3,8 +3,14 @@ import {
 } from 'react'
 
 import {
+    SectionNav,
+    SectionNavButton,
+} from '@/components/layout/section-nav'
+
+import {
     useSession,
 } from '@/features/auth/session-context'
+import { useBranch } from '@/features/branches/branch-context'
 
 import {
     SaleDetailsSheet,
@@ -41,6 +47,7 @@ export function SalesPage() {
 
     const tenantId =
         activeTenant?.id ?? ''
+    const { activeBranchId } = useBranch()
 
     /*
     |--------------------------------------------------------------------------
@@ -94,11 +101,13 @@ export function SalesPage() {
     const summaryQuery =
         useSalesSummary(
             tenantId,
+            activeBranchId ?? '',
         )
 
     const historyQuery =
         useSalesHistory(
             tenantId,
+            activeBranchId ?? '',
             filters,
         )
 
@@ -139,11 +148,8 @@ export function SalesPage() {
             |--------------------------------------------------------------------------
             */}
 
-            <nav
-                aria-label="Secciones de ventas"
-                className="-mb-px flex gap-5 border-b"
-            >
-                <SalesNavButton
+            <SectionNav label="Secciones de ventas">
+                <SectionNavButton
                     active={
                         view ===
                         'summary'
@@ -155,9 +161,9 @@ export function SalesPage() {
                     }
                 >
                     Resumen
-                </SalesNavButton>
+                </SectionNavButton>
 
-                <SalesNavButton
+                <SectionNavButton
                     active={
                         view ===
                         'history'
@@ -169,8 +175,8 @@ export function SalesPage() {
                     }
                 >
                     Historial
-                </SalesNavButton>
-            </nav>
+                </SectionNavButton>
+            </SectionNav>
 
             {/*
             |--------------------------------------------------------------------------
@@ -302,45 +308,5 @@ export function SalesPage() {
                 }}
             />
         </>
-    )
-}
-
-/*
-|--------------------------------------------------------------------------
-| Navigation button
-|--------------------------------------------------------------------------
-*/
-
-function SalesNavButton({
-    active,
-    children,
-    onClick,
-}: {
-    active: boolean
-    children: React.ReactNode
-    onClick: () => void
-}) {
-    return (
-        <button
-            type="button"
-            aria-current={
-                active
-                    ? 'page'
-                    : undefined
-            }
-            className={[
-                'border-b-2 px-0 py-2.5 text-xs font-medium transition-colors',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-
-                active
-                    ? 'border-primary text-foreground'
-                    : 'border-transparent text-muted-foreground hover:text-foreground',
-            ].join(' ')}
-            onClick={
-                onClick
-            }
-        >
-            {children}
-        </button>
     )
 }

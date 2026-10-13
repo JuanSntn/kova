@@ -5,7 +5,6 @@ import {
 import {
     CheckCircle2Icon,
     PrinterIcon,
-    ReceiptTextIcon,
 } from 'lucide-react'
 
 import {
@@ -121,35 +120,17 @@ export function CheckoutSuccess({
         const storageKey =
             `kova:auto-print:${ticket.sale.id}`
 
-        if (
-            window.sessionStorage
-                .getItem(
-                    storageKey,
-                )
-        ) {
+        try {
+            if (window.sessionStorage.getItem(storageKey)) return
+            window.sessionStorage.setItem(storageKey, '1')
+        } catch {
+            toast.error('La venta está registrada. Usa Imprimir ticket para imprimir manualmente.')
             return
         }
-
-        window.sessionStorage
-            .setItem(
-                storageKey,
-                '1',
-            )
-
-        void printTicket(
-            ticket,
-        ).catch(
-            () => {
-                window.sessionStorage
-                    .removeItem(
-                        storageKey,
-                    )
-
-                toast.error(
-                    'No pudimos abrir la impresión automática.',
-                )
-            },
-        )
+        void printTicket(ticket).catch(() => {
+            try { window.sessionStorage.removeItem(storageKey) } catch { /* Receipt remains saved. */ }
+            toast.error('La venta está registrada. No pudimos abrir la impresión automática.')
+        })
     }, [
         ticketQuery.data,
     ])
@@ -216,6 +197,7 @@ export function CheckoutSuccess({
                     </p>
 
                     <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+                        {!!order.inventory_warnings?.length && <div role="status" className="text-sm text-destructive">{order.inventory_warnings.map(message => <p key={message}>{message}</p>)}</div>}
                         {order.folio && (
                             <>
                                 <span>
@@ -246,14 +228,6 @@ export function CheckoutSuccess({
                 */}
 
                 <div className="mt-6">
-                    <div className="mb-2 flex items-center gap-2">
-                        <ReceiptTextIcon className="size-4 text-muted-foreground" />
-
-                        <span className="text-sm font-medium">
-                            Ticket
-                        </span>
-                    </div>
-
                     {ticketQuery.isPending && (
                         <TicketSkeleton />
                     )}

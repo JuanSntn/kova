@@ -21,6 +21,136 @@ class BillingSecurityTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_billing_rate_limits_are_isolated_by_operation(): void
+    {
+        [$owner, $tenant] = $this->provisionOwner();
+        $gateway = new FakeBillingGateway;
+        $this->app->instance(BillingGateway::class, $gateway);
+
+        $this->actingAs($owner, 'web')
+            ->withHeader('X-Tenant-ID', $tenant->public_id);
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $this->postJson('/api/billing/checkout', [
+                'plan' => PlanCode::Business->value,
+            ])->assertCreated();
+        }
+
+        $this->postJson('/api/billing/reactivate')
+            ->assertOk();
+
+        $this->postJson('/api/billing/reconcile')
+            ->assertOk();
+
+        $this->assertSame(5, $gateway->checkoutCalls);
+        $this->assertSame(1, $gateway->reactivateCalls);
+    }
+
+    public function test_repeated_billing_operation_returns_a_safe_rate_limit_response(): void
+    {
+        [$owner, $tenant] = $this->provisionOwner();
+        $gateway = new FakeBillingGateway;
+        $this->app->instance(BillingGateway::class, $gateway);
+
+        $this->actingAs($owner, 'web')
+            ->withHeader('X-Tenant-ID', $tenant->public_id);
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $this->postJson('/api/billing/checkout', [
+                'plan' => PlanCode::Business->value,
+            ])->assertCreated();
+        }
+
+        $response = $this->postJson('/api/billing/checkout', [
+            'plan' => PlanCode::Business->value,
+        ]);
+
+        $response
+            ->assertTooManyRequests()
+            ->assertHeader('Retry-After')
+            ->assertHeader('X-RateLimit-Limit', '5')
+            ->assertJsonPath('code', 'rate_limit_exceeded')
+            ->assertJsonStructure([
+                'message',
+                'retry_after',
+                'request_id',
+            ])
+            ->assertJsonMissingPath('exception')
+            ->assertJsonMissingPath('file')
+            ->assertJsonMissingPath('trace');
+
+        $this->assertSame(5, $gateway->checkoutCalls);
+    }
+
+    public function test_billing_rate_limits_are_isolated_by_tenant_and_user(): void
+    {
+        [$owner, $tenant] = $this->provisionOwner();
+        $gateway = new FakeBillingGateway;
+        $this->app->instance(BillingGateway::class, $gateway);
+
+        $requestCheckout = function (User $user, Tenant $requestTenant): void {
+            $this->app['auth']->forgetGuards();
+            $this->actingAs($user, 'web')
+                ->withHeader('X-Tenant-ID', $requestTenant->public_id)
+                ->postJson('/api/billing/checkout', [
+                    'plan' => PlanCode::Business->value,
+                ])
+                ->assertCreated();
+        };
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $requestCheckout($owner, $tenant);
+        }
+
+        $secondTenant = app(CreateTenant::class)->handle(
+            $owner,
+            Plan::where('code', PlanCode::Free->value)->firstOrFail(),
+            'Secundario',
+            'secundario',
+        );
+        $requestCheckout($owner, $secondTenant);
+
+        $secondOwner = User::factory()->create([
+            'email_verified_at' => now(),
+        ]);
+        app(CurrentTenant::class)->run($tenant, function () use ($secondOwner, $tenant): void {
+            Membership::query()->create([
+                'tenant_id' => $tenant->getKey(),
+                'user_id' => $secondOwner->getKey(),
+                'status' => MembershipStatus::Active,
+                'joined_at' => now(),
+            ]);
+
+            setPermissionsTeamId($tenant->getKey());
+            $secondOwner->assignRole(RoleName::Owner);
+        });
+        setPermissionsTeamId(null);
+        $this->assertNotSame($owner->getKey(), $secondOwner->getKey());
+        $requestCheckout($secondOwner, $tenant);
+
+        $this->assertSame(7, $gateway->checkoutCalls);
+    }
+
+    public function test_billing_summary_polling_does_not_consume_mutation_limit(): void
+    {
+        [$owner, $tenant] = $this->provisionOwner();
+        $gateway = new FakeBillingGateway;
+        $this->app->instance(BillingGateway::class, $gateway);
+
+        $this->actingAs($owner, 'web')
+            ->withHeader('X-Tenant-ID', $tenant->public_id);
+
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $this->getJson('/api/billing')->assertOk();
+        }
+
+        $this->postJson('/api/billing/checkout', [
+            'plan' => PlanCode::Business->value,
+        ])->assertCreated();
+
+        $this->assertSame(1, $gateway->checkoutCalls);
+    }
+
     public function test_owner_can_request_checkout_but_cannot_choose_stripe_price_or_tenant(): void
     {
         [$owner, $tenant] = $this->provisionOwner();
@@ -30,9 +160,7 @@ class BillingSecurityTest extends TestCase
         $this->actingAs($owner, 'web')
             ->getJson('/api/auth/me')
             ->assertOk()
-            ->assertJsonFragment([
-                'abilities' => ['billing.manage', 'billing.view'],
-            ]);
+            ->assertJsonPath('tenants.0.abilities', fn ($abilities) => in_array('billing.manage', $abilities) && in_array('billing.view', $abilities));
 
         $this->actingAs($owner, 'web')
             ->withHeader('X-Tenant-ID', $tenant->public_id)
@@ -42,7 +170,7 @@ class BillingSecurityTest extends TestCase
             ->assertCreated()
             ->assertExactJson(['url' => 'https://checkout.stripe.test/session']);
 
-        $this->assertSame(PlanCode::Business, $gateway->requestedPlan);
+        $this->assertSame(PlanCode::Business->value, $gateway->requestedPlan);
         $this->assertTrue($tenant->is($gateway->tenant));
         $this->assertTrue($owner->is($gateway->user));
 
@@ -95,7 +223,7 @@ class BillingSecurityTest extends TestCase
         $this->actingAs($cashier, 'web')
             ->getJson('/api/auth/me')
             ->assertOk()
-            ->assertJsonPath('tenants.0.abilities', []);
+            ->assertJsonPath('tenants.0.abilities', ['cash.view', 'cash.operate', 'orders.create']);
 
         $this->assertNotNull($owner);
     }
@@ -124,7 +252,7 @@ class BillingSecurityTest extends TestCase
             'email' => $email,
             'email_verified_at' => now(),
         ]);
-        $plan = Plan::query()->where('code', PlanCode::Free->value)->sole();
+        $plan = Plan::factory()->create();
         $tenant = app(CreateTenant::class)->handle(
             $owner,
             $plan,
@@ -142,15 +270,23 @@ class FakeBillingGateway implements BillingGateway
 
     public ?User $user = null;
 
-    public ?PlanCode $requestedPlan = null;
+    public ?string $requestedPlan = null;
+
+    public int $checkoutCalls = 0;
+
+    public int $reactivateCalls = 0;
 
     public function createCheckout(
         Tenant $tenant,
         User $user,
-        PlanCode $plan,
+        string $plan,
         string $operationId,
-    ): string
-    {
+        string $interval = 'month',
+        ?string $offer = null,
+        array $retainedBranches = [],
+        array $retainedMemberships = [],
+    ): string {
+        $this->checkoutCalls++;
         $this->tenant = $tenant;
         $this->user = $user;
         $this->requestedPlan = $plan;
@@ -165,13 +301,14 @@ class FakeBillingGateway implements BillingGateway
         return 'https://billing.stripe.test/portal';
     }
 
-    public function cancelSubscription(Tenant $tenant): void
+    public function cancelSubscription(Tenant $tenant, array $retainedBranches = [], array $retainedMemberships = []): void
     {
         $this->tenant = $tenant;
     }
 
     public function reactivateSubscription(Tenant $tenant): void
     {
+        $this->reactivateCalls++;
         $this->tenant = $tenant;
     }
 

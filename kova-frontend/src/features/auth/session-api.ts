@@ -37,7 +37,7 @@ export async function register(payload: {
 
 export async function resendVerification(email: string) {
   await getCsrfToken()
-  const { data } = await api.post<{ message: string }>(
+  const { data } = await api.post<{ message: string; status?: 'verified'; retry_after?: number }>(
     '/api/auth/email/verification-notification',
     { email },
   )
@@ -63,4 +63,19 @@ export function getApiError(error: unknown): {
   return {
     message: 'No pudimos conectar con el servidor. Intenta de nuevo.',
   }
+}
+
+export type VerificationStatus = {
+  status: 'pending' | 'verified' | 'unavailable'
+  email?: string
+  retry_after?: number
+  message?: string | null
+}
+
+export async function getVerificationStatus() {
+  const { data } = await api.get<VerificationStatus>(
+    '/api/auth/email/verification-status',
+    { timeout: 10000 },
+  )
+  return data
 }

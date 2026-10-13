@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 
 import type {
     ApiErrorResponse,
+    CategoriesResponse,
     Category,
     CreateCategoryPayload,
     CreateProductPayload,
@@ -25,13 +26,20 @@ type DataResponse<T> = {
 
 export async function getCategories(): Promise<Category[]> {
     const response =
-        await api.get<
-            DataResponse<Category[]>
-        >(
+        await api.get<CategoriesResponse>(
             '/api/pos/categories',
         )
 
     return response.data.data
+}
+
+export async function getCategoriesWithMeta(): Promise<CategoriesResponse> {
+    const response =
+        await api.get<CategoriesResponse>(
+            '/api/pos/categories',
+        )
+
+    return response.data
 }
 
 export async function createCategory(
@@ -258,6 +266,22 @@ function toProductFormData(
                 : '0',
         )
     }
+
+    if (payload.preparation_station !== undefined) {
+        formData.append('preparation_station', payload.preparation_station)
+    }
+
+    const fiscalFields = [
+        'sat_product_service_code',
+        'sat_unit_code',
+        'sat_tax_object_code',
+    ] as const
+
+    fiscalFields.forEach((field) => {
+        if (payload[field] !== undefined) {
+            formData.append(field, payload[field] ?? '')
+        }
+    })
 
     return formData
 }

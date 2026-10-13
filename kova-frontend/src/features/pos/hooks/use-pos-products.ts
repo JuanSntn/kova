@@ -21,6 +21,7 @@ const POS_STALE_TIME =
 
 export function usePosProducts(
     tenantId: string,
+    branchId: string,
 ) {
     /*
     |--------------------------------------------------------------------------
@@ -31,16 +32,14 @@ export function usePosProducts(
     const categoriesQuery =
         useQuery({
             queryKey:
-                queryKeys.categories(
-                    tenantId,
-                ),
+                queryKeys.posCategories(tenantId, branchId),
 
             queryFn:
                 getPosCategories,
 
             enabled:
                 Boolean(
-                    tenantId,
+                    tenantId && branchId,
                 ),
 
             staleTime:
@@ -56,16 +55,14 @@ export function usePosProducts(
     const productsQuery =
         useQuery({
             queryKey:
-                queryKeys.products(
-                    tenantId,
-                ),
+                queryKeys.posProducts(tenantId, branchId),
 
             queryFn:
                 getPosProducts,
 
             enabled:
                 Boolean(
-                    tenantId,
+                    tenantId && branchId,
                 ),
 
             staleTime:
@@ -86,7 +83,8 @@ export function usePosProducts(
         )
             .filter(
                 (category) =>
-                    category.is_active,
+                    category.is_active &&
+                    category.can_use,
             )
             .sort(
                 (a, b) => {
@@ -124,7 +122,8 @@ export function usePosProducts(
         )
             .filter(
                 (product) =>
-                    product.is_active,
+                    product.is_active &&
+                    product.can_use,
             )
             .sort(
                 (a, b) => {

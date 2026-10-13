@@ -54,19 +54,67 @@ final class StripeBillingService implements StripeBillingGateway
                 'limit' => 100,
             ]);
 
-            $subscriptions = collect($response->data)
-                ->map(fn(object $subscription): StripeSubscriptionData => $this->mapSubscription($subscription))
+            $raw = collect($response->data);
+
+            /*
+         * Kova tiene dos subscriptions:
+         * base
+         * extras
+         *
+         * El snapshot comercial siempre debe mostrar BASE.
+         */
+            $base = $raw->filter(function (object $subscription): bool {
+                $role = data_get(
+                    $subscription,
+                    'metadata.billing_role'
+                );
+
+                $type = data_get(
+                    $subscription,
+                    'metadata.type'
+                );
+
+                return $role === 'base' || $type === 'default';
+            });
+
+            if ($base->isEmpty()) {
+                $base = $raw->reject(
+                    fn(object $subscription): bool =>
+                    data_get(
+                        $subscription,
+                        'metadata.billing_role'
+                    ) === 'extras'
+                );
+            }
+
+            $subscriptions = $base
+                ->map(
+                    fn(object $subscription): StripeSubscriptionData =>
+                    $this->mapSubscription($subscription)
+                )
                 ->sortByDesc('createdAt')
                 ->values();
 
-            $currentSubscription = $this->findCurrentSubscription($subscriptions);
-            $displaySubscription = $currentSubscription ?? $subscriptions->first();
+            $currentSubscription = $this->findCurrentSubscription(
+                $subscriptions
+            );
 
-            return [true, $currentSubscription, $displaySubscription];
+            $displaySubscription = $currentSubscription
+                ?? $subscriptions->first();
+
+            return [
+                true,
+                $currentSubscription,
+                $displaySubscription,
+            ];
         } catch (Throwable $exception) {
             report($exception);
 
-            return [false, null, null];
+            return [
+                false,
+                null,
+                null,
+            ];
         }
     }
 
@@ -178,8 +226,6 @@ final class StripeBillingService implements StripeBillingGateway
                     ->retrieve(
                         $paymentMethod
                     );
-
-
             } catch (Throwable $exception) {
                 report($exception);
 
@@ -205,7 +251,7 @@ final class StripeBillingService implements StripeBillingGateway
                         'limit' => 1,
                     ]);
 
-                
+
 
                 $paymentMethod =
                     $response->data[0]
@@ -289,5 +335,4 @@ final class StripeBillingService implements StripeBillingGateway
             ] : null,
         ];
     }
-
 }

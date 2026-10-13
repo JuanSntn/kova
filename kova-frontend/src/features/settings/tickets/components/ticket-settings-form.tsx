@@ -1,12 +1,19 @@
 import {
+    type ReactNode,
+    useId,
     useEffect,
     useState,
 } from 'react'
 
 import {
+    Building2Icon,
+    FileTextIcon,
     LoaderCircleIcon,
+    PrinterIcon,
+    ReceiptTextIcon,
     SaveIcon,
 } from 'lucide-react'
+import axios from 'axios'
 
 import {
     toast,
@@ -45,7 +52,6 @@ import {
 
 import type {
     TicketSettings,
-    TicketSettingsMeta,
     TicketSettingsResponse,
     UpdateTicketSettingsPayload,
 } from '../types'
@@ -76,7 +82,7 @@ export function TicketSettingsForm({
 
     useEffect(() => {
         setForm(
-            response.data
+            response.data,
         )
     }, [
         response.data,
@@ -84,6 +90,7 @@ export function TicketSettingsForm({
 
     const meta =
         response.meta
+    const [saveError, setSaveError] = useState<string | null>(null)
 
     function visibility(
         key:
@@ -102,36 +109,46 @@ export function TicketSettingsForm({
                     [key]:
                         value,
                 },
-            })
+            }),
         )
     }
 
     async function save() {
+        setSaveError(null)
         try {
             const saved =
                 await onSave(
                     toPayload(
-                        form
-                    )
+                        form,
+                    ),
                 )
 
             setForm(
-                saved.data
+                saved.data,
             )
 
             toast.success(
                 'Configuración del ticket guardada.',
             )
-        } catch {
-            toast.error(
-                'No pudimos guardar la configuración del ticket.',
-            )
+        } catch (error) {
+            const message = axios.isAxiosError<{ message?: string }>(error)
+                    ? error.response?.data?.message ?? 'No pudimos guardar la configuración del ticket.'
+                    : 'No pudimos guardar la configuración del ticket.'
+            setSaveError(message)
+            toast.error(message)
         }
     }
 
     return (
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+            {/*
+            |--------------------------------------------------------------------------
+            | Settings
+            |--------------------------------------------------------------------------
+            */}
+
             <div className="space-y-5">
+                {saveError && <p role="alert" className="text-sm text-destructive">{saveError}</p>}
                 {/*
                 |--------------------------------------------------------------------------
                 | General
@@ -139,15 +156,29 @@ export function TicketSettingsForm({
                 */}
 
                 <Card>
-                    <CardHeader>
-                        <CardTitle className="text-base">
-                            General
-                        </CardTitle>
+                    <CardHeader className="border-b">
+                        <div className="flex items-start gap-3">
+                            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+                                <FileTextIcon className="size-4 text-muted-foreground" />
+                            </div>
+
+                            <div className="min-w-0">
+                                <CardTitle className="text-base">
+                                    General
+                                </CardTitle>
+
+                                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                                    Define la identificación y los textos
+                                    principales que aparecerán en tus tickets.
+                                </p>
+                            </div>
+                        </div>
                     </CardHeader>
 
-                    <CardContent className="space-y-4">
+                    <CardContent className="space-y-7 pt-6">
                         <Field
                             label="Prefijo del folio"
+                            description="Identificador corto que aparecerá antes del número de venta."
                         >
                             <Input
                                 value={
@@ -156,6 +187,7 @@ export function TicketSettingsForm({
                                 maxLength={
                                     10
                                 }
+                                placeholder="Ej. KV"
                                 onChange={event =>
                                     setForm(
                                         current => ({
@@ -168,14 +200,17 @@ export function TicketSettingsForm({
                                                         '',
                                                     )
                                                     .toUpperCase(),
-                                        })
+                                        }),
                                     )
                                 }
                             />
                         </Field>
 
+                        <div className="border-t" />
+
                         <Field
                             label="Texto de encabezado"
+                            description="Mensaje opcional que se mostrará en la parte superior del ticket."
                         >
                             <Input
                                 value={
@@ -185,20 +220,25 @@ export function TicketSettingsForm({
                                 maxLength={
                                     255
                                 }
+                                placeholder="Ej. Gracias por visitarnos"
                                 onChange={event =>
                                     setForm(
                                         current => ({
                                             ...current,
+
                                             header_text:
                                                 event.target.value,
-                                        })
+                                        }),
                                     )
                                 }
                             />
                         </Field>
 
+                        <div className="border-t" />
+
                         <Field
                             label="Texto adicional"
+                            description="Información complementaria que quieras comunicar al cliente."
                         >
                             <Textarea
                                 rows={3}
@@ -206,20 +246,25 @@ export function TicketSettingsForm({
                                     form.additional_text ??
                                     ''
                                 }
+                                placeholder="Información adicional del ticket..."
                                 onChange={event =>
                                     setForm(
                                         current => ({
                                             ...current,
+
                                             additional_text:
                                                 event.target.value,
-                                        })
+                                        }),
                                     )
                                 }
                             />
                         </Field>
 
+                        <div className="border-t" />
+
                         <Field
                             label="Pie del ticket"
+                            description="Mensaje final que aparecerá después del detalle de la venta."
                         >
                             <Textarea
                                 rows={3}
@@ -227,13 +272,15 @@ export function TicketSettingsForm({
                                     form.footer_text ??
                                     ''
                                 }
+                                placeholder="Ej. ¡Gracias por tu compra!"
                                 onChange={event =>
                                     setForm(
                                         current => ({
                                             ...current,
+
                                             footer_text:
                                                 event.target.value,
-                                        })
+                                        }),
                                     )
                                 }
                             />
@@ -243,29 +290,42 @@ export function TicketSettingsForm({
 
                 {/*
                 |--------------------------------------------------------------------------
-                | Business
+                | Business information
                 |--------------------------------------------------------------------------
                 */}
 
                 <Card>
-                    <CardHeader>
-                        <CardTitle className="text-base">
-                            Información del negocio
-                        </CardTitle>
+                    <CardHeader className="border-b">
+                        <div className="flex items-start gap-3">
+                            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+                                <Building2Icon className="size-4 text-muted-foreground" />
+                            </div>
+
+                            <div className="min-w-0">
+                                <CardTitle className="text-base">
+                                    Información del negocio
+                                </CardTitle>
+
+                                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                                    Elige qué datos públicos de tu negocio
+                                    quieres mostrar a tus clientes.
+                                </p>
+                            </div>
+                        </div>
                     </CardHeader>
 
-                    <CardContent>
+                    <CardContent className="divide-y">
                         <SettingSwitch
                             label="Logo"
                             description={
                                 meta.business.logo_url
-                                    ? undefined
+                                    ? 'Muestra el logo configurado para tu negocio.'
                                     : 'Sube primero un logo en Información del negocio.'
                             }
                             checked={
                                 Boolean(
                                     meta.business
-                                        .logo_url
+                                        .logo_url,
                                 ) &&
                                 form.visibility
                                     .logo
@@ -284,6 +344,7 @@ export function TicketSettingsForm({
 
                         <SettingSwitch
                             label="Nombre del negocio"
+                            description="Muestra el nombre público configurado para tu negocio."
                             checked={
                                 form.visibility
                                     .business_name
@@ -298,6 +359,7 @@ export function TicketSettingsForm({
 
                         <SettingSwitch
                             label="Teléfono"
+                            description="Muestra el número público de contacto."
                             checked={
                                 form.visibility
                                     .phone
@@ -312,6 +374,7 @@ export function TicketSettingsForm({
 
                         <SettingSwitch
                             label="Correo"
+                            description="Muestra el correo público configurado para tus clientes."
                             checked={
                                 form.visibility
                                     .email
@@ -328,20 +391,34 @@ export function TicketSettingsForm({
 
                 {/*
                 |--------------------------------------------------------------------------
-                | Sale
+                | Sale information
                 |--------------------------------------------------------------------------
                 */}
 
                 <Card>
-                    <CardHeader>
-                        <CardTitle className="text-base">
-                            Información de la venta
-                        </CardTitle>
+                    <CardHeader className="border-b">
+                        <div className="flex items-start gap-3">
+                            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+                                <ReceiptTextIcon className="size-4 text-muted-foreground" />
+                            </div>
+
+                            <div className="min-w-0">
+                                <CardTitle className="text-base">
+                                    Información de la venta
+                                </CardTitle>
+
+                                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                                    Selecciona los datos de la operación que
+                                    deben aparecer impresos en cada ticket.
+                                </p>
+                            </div>
+                        </div>
                     </CardHeader>
 
-                    <CardContent>
+                    <CardContent className="divide-y">
                         <SettingSwitch
                             label="Folio"
+                            description="Identificador único de la venta."
                             checked={
                                 form.visibility
                                     .folio
@@ -356,6 +433,7 @@ export function TicketSettingsForm({
 
                         <SettingSwitch
                             label="Fecha y hora"
+                            description="Fecha y hora en la que se registró la venta."
                             checked={
                                 form.visibility
                                     .datetime
@@ -387,6 +465,7 @@ export function TicketSettingsForm({
                             .order_type && (
                                 <SettingSwitch
                                     label="Tipo de orden"
+                                    description="Muestra el tipo de servicio asociado a la venta."
                                     checked={
                                         form.visibility
                                             .order_type
@@ -402,6 +481,7 @@ export function TicketSettingsForm({
 
                         <SettingSwitch
                             label="Precio unitario"
+                            description="Muestra el precio individual de cada producto."
                             checked={
                                 form.visibility
                                     .unit_price
@@ -416,6 +496,7 @@ export function TicketSettingsForm({
 
                         <SettingSwitch
                             label="Impuestos incluidos"
+                            description="Muestra el desglose de impuestos de la venta."
                             checked={
                                 form.visibility
                                     .tax_breakdown
@@ -430,6 +511,7 @@ export function TicketSettingsForm({
 
                         <SettingSwitch
                             label="Método de pago"
+                            description="Indica cómo pagó el cliente."
                             checked={
                                 form.visibility
                                     .payment_method
@@ -444,6 +526,7 @@ export function TicketSettingsForm({
 
                         <SettingSwitch
                             label="Efectivo recibido"
+                            description="Muestra el importe entregado por el cliente."
                             checked={
                                 form.visibility
                                     .cash_received
@@ -458,6 +541,7 @@ export function TicketSettingsForm({
 
                         <SettingSwitch
                             label="Cambio"
+                            description="Muestra el cambio entregado al cliente."
                             checked={
                                 form.visibility
                                     .change
@@ -473,26 +557,56 @@ export function TicketSettingsForm({
                 </Card>
 
                 {/*
-                 * Facturación NO aparece todavía.
-                 *
-                 * Incluso en plan pagado esperamos
-                 * a que fiscal_ready sea true.
-                 */}
+                |--------------------------------------------------------------------------
+                | Invoicing
+                |--------------------------------------------------------------------------
+                |
+                | Facturación sigue apareciendo únicamente cuando la
+                | capacidad está disponible y fiscal_ready es true.
+                |
+                */}
 
                 {meta.capabilities
-                    .invoice_qr &&
-                    meta.sources
-                        .fiscal_ready && (
+                    .invoice_qr && (
                         <Card>
-                            <CardHeader>
-                                <CardTitle className="text-base">
-                                    Facturación
-                                </CardTitle>
+                            <CardHeader className="border-b">
+                                <div className="flex items-start gap-3">
+                                    <div className="min-w-0">
+                                        <CardTitle className="text-base">
+                                            Facturación
+                                        </CardTitle>
+
+                                        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                                            Configura las opciones de
+                                            facturación disponibles para
+                                            tus clientes desde el ticket.
+                                        </p>
+                                    </div>
+                                </div>
                             </CardHeader>
 
                             <CardContent>
+                                <ol className="divide-y text-sm">
+                                    <li className="space-y-2 py-4">
+                                        <p className="font-medium">1. Datos fiscales · {meta.invoice_qr.fiscal_ready ? 'Completado' : 'Pendiente'}</p>
+                                        <p className="text-muted-foreground">Valida tus datos fiscales, carga un CSD vigente y completa la conexión de facturación.</p>
+                                        <a className="underline underline-offset-4" href={meta.invoice_qr.fiscal_url}>Ir a Facturación fiscal</a>
+                                    </li>
+                                    <li className="space-y-2 py-4">
+                                        <p className="font-medium">2. Sucursales · {meta.invoice_qr.branches_ready ? 'Completado' : 'Pendiente'}</p>
+                                        <p className="text-muted-foreground">Completa el código postal, dirección y zona horaria de todas las sucursales operativas.</p>
+                                        {meta.invoice_qr.missing_branches.map(branch => <p key={branch.id} className="text-muted-foreground">{branch.name}: revisa su dirección y código postal.</p>)}
+                                        <a className="underline underline-offset-4" href={meta.invoice_qr.branches_url}>Ir a Sucursales</a>
+                                    </li>
+                                    <li className="space-y-2 py-4">
+                                        <p className="font-medium">3. Activar QR · {meta.invoice_qr.enabled ? 'Completado' : 'Pendiente'}</p>
+                                        <p className="text-muted-foreground">{meta.invoice_qr.message}</p>
+                                    </li>
+                                </ol>
                                 <SettingSwitch
+                                    disabled={!meta.invoice_qr.ready || isSaving}
                                     label="Mostrar QR de facturación"
+                                    description="Permite que el cliente acceda al flujo de facturación desde su ticket."
                                     checked={
                                         form.invoice
                                             .show_qr
@@ -508,7 +622,7 @@ export function TicketSettingsForm({
                                                     show_qr:
                                                         value,
                                                 },
-                                            })
+                                            }),
                                         )
                                     }
                                 />
@@ -523,15 +637,29 @@ export function TicketSettingsForm({
                 */}
 
                 <Card>
-                    <CardHeader>
-                        <CardTitle className="text-base">
-                            Impresión
-                        </CardTitle>
+                    <CardHeader className="border-b">
+                        <div className="flex items-start gap-3">
+                            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+                                <PrinterIcon className="size-4 text-muted-foreground" />
+                            </div>
+
+                            <div className="min-w-0">
+                                <CardTitle className="text-base">
+                                    Impresión
+                                </CardTitle>
+
+                                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                                    Define el formato físico y el
+                                    comportamiento de impresión de tus tickets.
+                                </p>
+                            </div>
+                        </div>
                     </CardHeader>
 
-                    <CardContent className="space-y-4">
+                    <CardContent className="space-y-7 pt-6">
                         <Field
                             label="Ancho de papel"
+                            description="Selecciona el tamaño compatible con tu impresora térmica."
                         >
                             <select
                                 value={
@@ -552,7 +680,7 @@ export function TicketSettingsForm({
                                                         event.target.value,
                                                     ) as 58 | 80,
                                             },
-                                        })
+                                        }),
                                     )
                                 }
                             >
@@ -566,7 +694,12 @@ export function TicketSettingsForm({
                             </select>
                         </Field>
 
-                        <Field label="Copias">
+                        <div className="border-t" />
+
+                        <Field
+                            label="Copias"
+                            description="Número de copias que quieres generar por cada impresión."
+                        >
                             <select
                                 value={
                                     form.printing
@@ -586,7 +719,7 @@ export function TicketSettingsForm({
                                                         event.target.value,
                                                     ),
                                             },
-                                        })
+                                        }),
                                     )
                                 }
                             >
@@ -604,8 +737,11 @@ export function TicketSettingsForm({
                             </select>
                         </Field>
 
+                        <div className="border-t" />
+
                         <SettingSwitch
                             label="Imprimir automáticamente"
+                            description="Envía el ticket a impresión después de completar una venta."
                             checked={
                                 form.printing
                                     .auto_print
@@ -621,14 +757,20 @@ export function TicketSettingsForm({
                                             auto_print:
                                                 value,
                                         },
-                                    })
+                                    }),
                                 )
                             }
                         />
                     </CardContent>
                 </Card>
 
-                <div className="flex justify-end border-t pt-5">
+                {/*
+                |--------------------------------------------------------------------------
+                | Actions
+                |--------------------------------------------------------------------------
+                */}
+
+                <div className="flex flex-col-reverse gap-2 border-t pt-5 sm:flex-row sm:items-center sm:justify-end">
                     <Button
                         type="button"
                         disabled={
@@ -650,6 +792,12 @@ export function TicketSettingsForm({
                     </Button>
                 </div>
             </div>
+
+            {/*
+            |--------------------------------------------------------------------------
+            | Preview
+            |--------------------------------------------------------------------------
+            */}
 
             <aside className="xl:sticky xl:top-5 xl:self-start">
                 <TicketPreview
@@ -676,25 +824,28 @@ function SettingSwitch({
     description?: string
     checked: boolean
     disabled?: boolean
+
     onChange: (
         checked: boolean,
     ) => void
 }) {
+    const id = useId()
     return (
-        <div className="flex min-h-14 items-center justify-between gap-4 border-b py-3 last:border-b-0">
-            <div>
-                <Label>
+        <div className="flex min-h-16 items-center justify-between gap-6 py-4">
+            <div className="min-w-0">
+                <Label htmlFor={id} className="text-sm font-medium leading-5">
                     {label}
                 </Label>
 
                 {description && (
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
                         {description}
                     </p>
                 )}
             </div>
 
             <Switch
+                id={id}
                 checked={
                     checked
                 }
@@ -704,6 +855,7 @@ function SettingSwitch({
                 onCheckedChange={
                     onChange
                 }
+                className="shrink-0"
             />
         </div>
     )
@@ -711,19 +863,30 @@ function SettingSwitch({
 
 function Field({
     label,
+    description,
     children,
 }: {
     label: string
-    children:
-    React.ReactNode
+    description?: string
+    children: ReactNode
 }) {
     return (
-        <div className="space-y-1.5">
-            <Label>
-                {label}
-            </Label>
+        <div className="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)] sm:gap-6">
+            <div>
+                <Label className="text-sm font-medium">
+                    {label}
+                </Label>
 
-            {children}
+                {description && (
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {description}
+                    </p>
+                )}
+            </div>
+
+            <div className="max-w-lg">
+                {children}
+            </div>
         </div>
     )
 }
@@ -749,17 +912,17 @@ function toPayload(
 
         header_text:
             nullable(
-                settings.header_text
+                settings.header_text,
             ),
 
         footer_text:
             nullable(
-                settings.footer_text
+                settings.footer_text,
             ),
 
         additional_text:
             nullable(
-                settings.additional_text
+                settings.additional_text,
             ),
 
         show_logo:
@@ -823,7 +986,7 @@ function toPayload(
 
         invoice_qr_text:
             nullable(
-                settings.invoice.qr_text
+                settings.invoice.qr_text,
             ),
 
         paper_width_mm:

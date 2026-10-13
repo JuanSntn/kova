@@ -6,9 +6,6 @@ import {
     useQueryClient,
 } from '@tanstack/react-query'
 import {
-    useState,
-} from 'react'
-import {
     toast,
 } from 'sonner'
 
@@ -32,15 +29,11 @@ import {
 } from '@/lib/query-keys'
 
 import {
-    createTax,
     getTaxApiErrorMessage,
     updateTax,
     updateTaxConfig,
 } from './api'
 
-import {
-    TaxForm,
-} from './components/tax-form'
 import {
     TaxList,
 } from './components/tax-list'
@@ -54,7 +47,7 @@ import {
 
 import type {
     Tax,
-    TaxPayload,
+    TaxUpdatePayload,
 } from './types'
 
 export function TaxesPage() {
@@ -73,17 +66,6 @@ export function TaxesPage() {
 
     const queryClient =
         useQueryClient()
-
-    /*
-    |--------------------------------------------------------------------------
-    | Form state
-    |--------------------------------------------------------------------------
-    */
-
-    const [
-        taxFormOpen,
-        setTaxFormOpen,
-    ] = useState(false)
 
     /*
     |--------------------------------------------------------------------------
@@ -119,40 +101,6 @@ export function TaxesPage() {
 
     /*
     |--------------------------------------------------------------------------
-    | Create
-    |--------------------------------------------------------------------------
-    */
-
-    const createMutation =
-        useMutation({
-            mutationFn:
-                createTax,
-
-            onSuccess:
-                () => {
-                    toast.success(
-                        'Impuesto agregado.',
-                    )
-
-                    setTaxFormOpen(
-                        false,
-                    )
-
-                    void invalidate()
-                },
-
-            onError:
-                (error) => {
-                    toast.error(
-                        getTaxApiErrorMessage(
-                            error,
-                        ),
-                    )
-                },
-        })
-
-    /*
-    |--------------------------------------------------------------------------
     | Update
     |--------------------------------------------------------------------------
     */
@@ -166,7 +114,7 @@ export function TaxesPage() {
                 }: {
                     tax: Tax
                     payload:
-                    Partial<TaxPayload>
+                    TaxUpdatePayload
                 }) =>
                     updateTax(
                         tax.id,
@@ -249,38 +197,17 @@ export function TaxesPage() {
             |--------------------------------------------------------------------------
             */}
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
                 <div>
                     <h1 className="text-xl font-semibold tracking-tight">
                         Impuestos
                     </h1>
 
                     <p className="mt-1 text-sm text-muted-foreground">
-                        Configura los impuestos usados
-                        por productos y ventas.
+                        Elige entre los tratamientos fiscales
+                        admitidos para productos y ventas.
                     </p>
                 </div>
-
-                <TaxForm
-                    open={
-                        taxFormOpen
-                    }
-                    onOpenChange={
-                        setTaxFormOpen
-                    }
-                    saving={
-                        createMutation
-                            .isPending
-                    }
-                    onSubmit={(
-                        payload,
-                    ) =>
-                        createMutation
-                            .mutate(
-                                payload,
-                            )
-                    }
-                />
             </div>
 
             {/*
@@ -395,14 +322,12 @@ export function TaxesPage() {
 function TaxesPageSkeleton() {
     return (
         <div className="w-full space-y-5">
-            <div className="flex items-start justify-between gap-4">
+            <div>
                 <div className="space-y-2">
                     <Skeleton className="h-6 w-32" />
 
                     <Skeleton className="h-4 w-80 max-w-full" />
                 </div>
-
-                <Skeleton className="h-9 w-36" />
             </div>
 
             <div className="space-y-4 border-b pb-5">

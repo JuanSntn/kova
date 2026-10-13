@@ -22,11 +22,7 @@ class CreateTenantTest extends TestCase
         $this->seed(RoleSeeder::class);
 
         $owner = User::factory()->create();
-        $plan = Plan::factory()->create([
-            'monthly_price' => 100,
-            'max_users' => 5,
-            'included_stamps' => 50,
-        ]);
+        $plan = Plan::factory()->create();
 
         $tenant = app(CreateTenant::class)->handle(
             owner: $owner,
@@ -50,22 +46,19 @@ class CreateTenantTest extends TestCase
 
             $subscription = PlanSubscription::query()->sole();
 
-            $this->assertSame('100.00', $subscription->monthly_price_snapshot);
+            $this->assertSame('0.00', $subscription->monthly_price_snapshot);
             $this->assertSame(5, $subscription->entitlements_snapshot['max_users']);
             $this->assertSame(50, $subscription->entitlements_snapshot['included_stamps']);
         });
 
         setPermissionsTeamId(null);
 
-        $plan->update([
-            'monthly_price' => 200,
-            'max_users' => 10,
-        ]);
+        $plan->update(['name' => 'Renamed catalog identity']);
 
         app(CurrentTenant::class)->run($tenant, function (): void {
             $subscription = PlanSubscription::query()->sole();
 
-            $this->assertSame('100.00', $subscription->monthly_price_snapshot);
+            $this->assertSame('0.00', $subscription->monthly_price_snapshot);
             $this->assertSame(5, $subscription->entitlements_snapshot['max_users']);
         });
     }

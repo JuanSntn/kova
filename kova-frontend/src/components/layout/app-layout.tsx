@@ -7,7 +7,8 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from '@/components/ui/sidebar'
-import { Toaster } from 'sonner'
+import { Toaster, toast } from 'sonner'
+import { checkoutContextLocked } from '@/features/pos/checkout-storage'
 import { Separator } from '@/components/ui/separator'
 import {
   Breadcrumb,
@@ -34,8 +35,10 @@ const fallbackPageLabels: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/forbidden': 'Acceso denegado',
   '/menu': 'Menú',
+  '/inventory': 'Inventario',
   '/pos': 'Punto de venta',
   '/settings/taxes': 'Impuestos',
+  '/settings/branches': 'Sucursales',
 }
 
 function getTenantRelativePath(pathname: string, tenantSlug: string) {
@@ -72,6 +75,7 @@ export function AppLayout({
     pageLabel === 'Kova' ? 'Kova' : `Kova - ${pageLabel}`
 
   async function handleLogout() {
+    if (checkoutContextLocked()) { toast.error('Verifica la venta pendiente antes de cerrar sesión.'); return }
     try {
       await logoutRequest()
     } finally {
@@ -82,13 +86,6 @@ export function AppLayout({
     }
   }
 
-  function handleTenantChange(tenant: TenantSummary) {
-    navigate({
-      to: '/$tenantSlug/dashboard',
-      params: { tenantSlug: tenant.slug },
-    })
-  }
-
   return (
     <SidebarProvider>
       <AppSidebar
@@ -96,7 +93,6 @@ export function AppLayout({
         isNavigationPending={isNavigationPending}
         navigationSections={navigationSections}
         onLogout={handleLogout}
-        onTenantChange={handleTenantChange}
         tenants={session.tenants}
         user={session.user}
       />

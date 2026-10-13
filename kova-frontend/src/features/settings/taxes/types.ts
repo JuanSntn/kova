@@ -27,16 +27,6 @@ export type TaxConfig = {
     boolean
 }
 
-export type TaxPayload = {
-    name: string
-
-    code: string
-
-    factor_type:
-    TaxFactorType
-
-    rate: number
-
-    is_active:
-    boolean
+export type TaxUpdatePayload = {
+    is_active: boolean
 }

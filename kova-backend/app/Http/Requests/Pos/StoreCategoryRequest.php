@@ -16,6 +16,18 @@ class StoreCategoryRequest extends FormRequest
     public function rules(): array
     {
         return [
+            // El tenant y el acceso operativo son responsabilidad del backend.
+            'id' => ['prohibited'],
+            'public_id' => ['prohibited'],
+            'tenant_id' => ['prohibited'],
+            'branch_id' => ['prohibited'],
+            'user_id' => ['prohibited'],
+            'billing_enabled' => ['prohibited'],
+            'locked_by_plan' => ['prohibited'],
+            'can_edit' => ['prohibited'],
+            'can_delete' => ['prohibited'],
+            'can_use' => ['prohibited'],
+
             'name' => [
                 'required',
                 'string',

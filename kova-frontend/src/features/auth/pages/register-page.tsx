@@ -280,7 +280,7 @@ function MockSidebar() {
 
       <div className="mt-auto border-t border-white/10 px-4 py-4">
         <p className="text-[9px] text-slate-500">
-          Kova POS
+          Kova Caja
         </p>
       </div>
     </aside>

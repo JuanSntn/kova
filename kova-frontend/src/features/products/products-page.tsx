@@ -36,6 +36,17 @@ import { useProductsData } from './hooks/use-products-data'
 
 import type { Product } from './types'
 
+const PRODUCT_VIEW_STORAGE_KEY = 'kova:products:view:v1'
+
+function readProductView(): ProductViewMode {
+    try {
+        const saved = window.localStorage.getItem(PRODUCT_VIEW_STORAGE_KEY)
+        return saved === 'table' ? 'table' : 'cards'
+    } catch {
+        return 'cards'
+    }
+}
+
 export function ProductsPage() {
     const { activeTenant } =
         useSession()
@@ -88,10 +99,19 @@ export function ProductsPage() {
 
     const [
         viewMode,
-        setViewMode,
+        setViewModeState,
     ] = useState<ProductViewMode>(
-        'cards',
+        readProductView,
     )
+
+    function setViewMode(value: ProductViewMode) {
+        setViewModeState(value)
+        try {
+            window.localStorage.setItem(PRODUCT_VIEW_STORAGE_KEY, value)
+        } catch {
+            // Storage is optional: switching views must still work when blocked.
+        }
+    }
 
     /*
     |--------------------------------------------------------------------------
@@ -159,9 +179,30 @@ export function ProductsPage() {
         usage?.limit_reached ??
         false
 
+    const hasOperativeCategories =
+        sortedCategories.some(
+            (category) => category.can_use,
+        )
+
+    const lockedProducts =
+        products.filter(
+            (product) =>
+                product.locked_by_plan,
+        )
+
+    const lockedCategories =
+        categories.filter(
+            (category) =>
+                category.locked_by_plan,
+        )
+
+    const hasLockedCatalog =
+        lockedProducts.length > 0 ||
+        lockedCategories.length > 0
+
     const canCreateProduct =
         !limitReached &&
-        sortedCategories.length > 0
+        hasOperativeCategories
 
     /*
     |--------------------------------------------------------------------------
@@ -311,18 +352,27 @@ export function ProductsPage() {
                 </Alert>
             )}
 
-            {sortedCategories.length ===
-                0 && (
-                    <Alert>
-                        <AlertCircleIcon className="size-4" />
+            {!hasOperativeCategories && (
+                <Alert>
+                    <AlertCircleIcon className="size-4" />
 
-                        <AlertDescription>
-                            Necesitas al menos una
-                            categoría activa antes
-                            de crear productos.
-                        </AlertDescription>
-                    </Alert>
-                )}
+                    <AlertDescription>
+                        Necesitas al menos una
+                        categoría operativa antes
+                        de crear productos.
+                    </AlertDescription>
+                </Alert>
+            )}
+
+            {hasLockedCatalog && (
+                <Alert>
+                    <AlertCircleIcon className="size-4" />
+
+                    <AlertDescription>
+                        Algunos productos o categorías están bloqueados por tu plan actual. Reactiva o sube tu plan para volver a editarlos o usarlos.
+                    </AlertDescription>
+                </Alert>
+            )}
 
             {/*
             |--------------------------------------------------------------------------

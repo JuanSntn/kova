@@ -15,6 +15,7 @@ class Order extends Model
     protected $fillable = [
         'tenant_id',
         'branch_id',
+        'cash_shift_id',
         'folio',
         'order_type',
         'status',
@@ -72,5 +73,25 @@ class Order extends Model
     public function items(): HasMany
     {
         return $this->hasMany(OrderItem::class);
+    }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function ticket()
+    {
+        return $this->hasOne(Ticket::class);
+    }
+
+    public function invoice()
+    {
+        return $this->hasOne(Invoice::class)->latestOfMany();
+    }
+
+    public function invoices()
+    {
+        return $this->hasMany(Invoice::class);
     }
 }

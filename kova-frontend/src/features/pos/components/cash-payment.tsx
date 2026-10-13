@@ -1,6 +1,7 @@
 import {
     BanknoteIcon,
 } from 'lucide-react'
+import { cents } from '../money'
 
 import {
     Button,
@@ -36,17 +37,17 @@ export function CashPayment({
 
     const change =
         Math.max(
-            received -
-            total,
+            cents(received) -
+            cents(total),
             0,
-        )
+        ) / 100
 
     const missing =
         Math.max(
-            total -
-            received,
+            cents(total) -
+            cents(received),
             0,
-        )
+        ) / 100
 
     const suggestions =
         getCashSuggestions(

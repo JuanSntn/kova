@@ -3,10 +3,10 @@
 namespace App\Domain\Auth\Actions;
 
 use App\Domain\Tenancy\Actions\CreateTenant;
-use App\Enums\PlanCode;
 use App\Models\Plan;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Enums\AccountType;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -26,7 +26,7 @@ class RegisterTenant
     ): array {
         return DB::transaction(function () use ($name, $email, $password, $businessName): array {
             $plan = Plan::query()
-                ->where('code', PlanCode::Free->value)
+                ->where('code', 'free')
                 ->where('is_active', true)
                 ->first();
 
@@ -36,6 +36,7 @@ class RegisterTenant
 
             $user = User::query()->create([
                 'name' => $name,
+                'account_type' => AccountType::Email,
                 'email' => $email,
                 'password' => $password,
             ]);

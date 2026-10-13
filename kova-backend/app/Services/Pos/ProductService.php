@@ -4,15 +4,23 @@ namespace App\Services\Pos;
 
 use App\Models\Product;
 use App\Models\Tenant;
+use App\Services\Fiscal\SatCatalogService;
 use App\Services\Plans\PlanLimitService;
+use App\Services\Subscriptions\CatalogAccessService;
+use App\Services\Subscriptions\EntitlementService;
+use App\Services\Taxes\TaxTreatmentCatalog;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 final class ProductService
 {
     public function __construct(
         private readonly PlanLimitService $limits,
+        private readonly CatalogAccessService $catalogAccess,
+        private readonly SatCatalogService $satCatalogs,
+        private readonly TaxTreatmentCatalog $taxTreatments,
     ) {}
 
     public function list(
@@ -29,7 +37,17 @@ final class ProductService
             ->get();
     }
 
-    public function create(
+    public function create(Tenant $tenant, array $data): Product
+    {
+        return DB::transaction(function () use ($tenant, $data) {
+            Tenant::whereKey($tenant->id)->lockForUpdate()->firstOrFail();
+            app(EntitlementService::class)->assertWritable($tenant);
+
+            return $this->createWithinLimit($tenant, $data);
+        });
+    }
+
+    private function createWithinLimit(
         Tenant $tenant,
         array $data
     ): Product {
@@ -50,6 +68,10 @@ final class ProductService
             )
             ->firstOrFail();
 
+        $this->catalogAccess->assertCategoryUsableForProducts(
+            $category
+        );
+
         /*
          * Guardar imagen si fue enviada.
          */
@@ -67,45 +89,40 @@ final class ProductService
             ) &&
             $data['tax_id'] !== null
         ) {
-            $taxId = $tenant
-                ->taxes()
-                ->where(
-                    'public_id',
-                    $data['tax_id']
-                )
-                ->firstOrFail()
+            $taxId = $this->taxTreatments
+                ->findActive($tenant, $data['tax_id'])
                 ->id;
         }
 
         $product = $tenant
             ->products()
             ->create([
-                'category_id' =>
-                $category->id,
+                'category_id' => $category->id,
 
-                'tax_id' =>
-                $taxId,
+                'tax_id' => $taxId,
 
-                'name' =>
-                trim($data['name']),
+                'name' => trim($data['name']),
 
-                'description' =>
-                $data['description'] ?? null,
+                'description' => $data['description'] ?? null,
 
-                'price' =>
-                $data['price'],
+                'price' => $data['price'],
 
-                'image_path' =>
-                $imagePath,
+                'image_path' => $imagePath,
 
-                'sort_order' =>
-                $data['sort_order'] ?? 0,
+                'sort_order' => $data['sort_order'] ?? 0,
 
-                'is_active' =>
-                $data['is_active'] ?? true,
+                'is_active' => $data['is_active'] ?? true,
+
+                'preparation_station' => $data['preparation_station'] ?? 'kitchen',
+
+                'billing_enabled' => true,
+                'sat_product_service_code' => $data['sat_product_service_code'] ?? null,
+                'sat_unit_code' => $data['sat_unit_code'] ?? null,
+                'sat_unit_name' => isset($data['sat_unit_code']) ? $this->satCatalogs->resolve('sat_units', $data['sat_unit_code'])['description'] : null,
+                'sat_tax_object_code' => $data['sat_tax_object_code'] ?? null,
             ]);
 
-        return $product->load([
+        return $product->refresh()->load([
             'category',
             'tax',
         ]);
@@ -133,30 +150,31 @@ final class ProductService
         Product $product,
         array $data
     ): Product {
+        $this->catalogAccess->assertProductMutable(
+            $product
+        );
+
         $attributes = [
-            'category_id' =>
-            $product->category_id,
+            'category_id' => $product->category_id,
 
-            'tax_id' =>
-            $product->tax_id,
+            'tax_id' => $product->tax_id,
 
-            'name' =>
-            $product->name,
+            'name' => $product->name,
 
-            'description' =>
-            $product->description,
+            'description' => $product->description,
 
-            'price' =>
-            $product->price,
+            'price' => $product->price,
 
-            'image_path' =>
-            $product->image_path,
+            'image_path' => $product->image_path,
 
-            'sort_order' =>
-            $product->sort_order,
+            'sort_order' => $product->sort_order,
 
-            'is_active' =>
-            $product->is_active,
+            'is_active' => $product->is_active,
+            'preparation_station' => $product->preparation_station,
+            'sat_product_service_code' => $product->sat_product_service_code,
+            'sat_unit_code' => $product->sat_unit_code,
+            'sat_unit_name' => $product->sat_unit_name,
+            'sat_tax_object_code' => $product->sat_tax_object_code,
         ];
 
         /*
@@ -175,6 +193,10 @@ final class ProductService
                     $data['category_id']
                 )
                 ->firstOrFail();
+
+            $this->catalogAccess->assertCategoryUsableForProducts(
+                $category
+            );
 
             $attributes['category_id'] =
                 $category->id;
@@ -235,13 +257,8 @@ final class ProductService
             $attributes['tax_id'] =
                 $data['tax_id'] === null
                     ? null
-                    : $tenant
-                        ->taxes()
-                        ->where(
-                            'public_id',
-                            $data['tax_id']
-                        )
-                        ->firstOrFail()
+                    : $this->taxTreatments
+                        ->findActive($tenant, $data['tax_id'])
                         ->id;
         }
 
@@ -320,6 +337,19 @@ final class ProductService
                 $data['is_active'];
         }
 
+        if (array_key_exists('preparation_station', $data)) {
+            $attributes['preparation_station'] = $data['preparation_station'];
+        }
+
+        foreach (['sat_product_service_code', 'sat_unit_code', 'sat_tax_object_code'] as $fiscalField) {
+            if (array_key_exists($fiscalField, $data)) {
+                $attributes[$fiscalField] = $data[$fiscalField];
+            }
+        }
+        if (array_key_exists('sat_unit_code', $data)) {
+            $attributes['sat_unit_name'] = $data['sat_unit_code'] ? $this->satCatalogs->resolve('sat_units', $data['sat_unit_code'])['description'] : null;
+        }
+
         $product->update(
             $attributes
         );
@@ -335,6 +365,10 @@ final class ProductService
     public function delete(
         Product $product
     ): void {
+        $this->catalogAccess->assertProductMutable(
+            $product
+        );
+
         /*
          * Como Product usa SoftDeletes,
          * NO eliminamos la fotografía física aquí.
@@ -350,7 +384,7 @@ final class ProductService
         mixed $image
     ): ?string {
         if (
-            !$image instanceof UploadedFile
+            ! $image instanceof UploadedFile
         ) {
             return null;
         }

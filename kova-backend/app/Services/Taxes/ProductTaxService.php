@@ -3,29 +3,22 @@
 namespace App\Services\Taxes;
 
 use App\Models\Product;
-use App\Models\Tenant;
 use App\Models\Tax;
+use App\Models\Tenant;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 final class ProductTaxService
 {
+    public function __construct(
+        private readonly TaxSettingsService $settings,
+        private readonly TaxTreatmentCatalog $catalog,
+    ) {}
+
     public function defaultTax(Tenant $tenant): Tax
     {
-        $setting = $tenant
-            ->taxSettings()
-            ->with('defaultTax')
-            ->first();
-
-        if (! $setting?->defaultTax) {
-            app(TenantTaxProvisioner::class)->provisionDefaults($tenant);
-
-            $setting = $tenant
-                ->taxSettings()
-                ->with('defaultTax')
-                ->first();
-        }
+        $setting = $this->settings->setting($tenant);
 
         if (! $setting?->defaultTax) {
             throw ValidationException::withMessages([
@@ -38,13 +31,23 @@ final class ProductTaxService
 
     public function resolveEffectiveTax(Product $product, Tax $defaultTax): Tax
     {
-        return $product->tax_id !== null
+        $tax = $product->tax_id !== null
             ? $product->tax
             : $defaultTax;
+
+        if (! $tax) {
+            throw ValidationException::withMessages([
+                'tax' => 'El producto no tiene un tratamiento fiscal disponible.',
+            ]);
+        }
+
+        $this->catalog->assertUsable($tax);
+
+        return $tax;
     }
 
     /**
-     * @param EloquentCollection<int, Product> $products
+     * @param  EloquentCollection<int, Product>  $products
      * @return Collection<int, Tax>
      */
     public function effectiveTaxesForProducts(
@@ -67,29 +70,16 @@ final class ProductTaxService
         string|float|int $grossAmount,
         Tax $tax,
     ): array {
-        $lineTotal = $this->roundMoney((float) $grossAmount);
-
-        if ($tax->factor_type === 'exempt' || (float) $tax->rate === 0.0) {
-            return [
-                'tax_base' => $lineTotal,
-                'tax_amount' => 0.0,
-                'line_total' => $lineTotal,
-            ];
-        }
-
-        $divisor = 1 + (((float) $tax->rate) / 100);
-        $taxBase = $this->roundMoney($lineTotal / $divisor);
-        $taxAmount = $this->roundMoney($lineTotal - $taxBase);
+        $lineTotal = \Brick\Math\BigDecimal::of((string) $grossAmount)->toScale(2, \Brick\Math\RoundingMode::HalfUp);
+        $rate = \Brick\Math\BigDecimal::of((string) $tax->rate);
+        $base = $tax->factor_type === 'exempt' || $rate->isZero()
+            ? $lineTotal
+            : $lineTotal->dividedBy($rate->multipliedBy('0.01')->plus(1), 2, \Brick\Math\RoundingMode::HalfUp);
 
         return [
-            'tax_base' => $taxBase,
-            'tax_amount' => $taxAmount,
-            'line_total' => $this->roundMoney($taxBase + $taxAmount),
+            'tax_base' => (string) $base,
+            'tax_amount' => (string) $lineTotal->minus($base),
+            'line_total' => (string) $lineTotal,
         ];
-    }
-
-    private function roundMoney(float $amount): float
-    {
-        return round($amount, 2);
     }
 }

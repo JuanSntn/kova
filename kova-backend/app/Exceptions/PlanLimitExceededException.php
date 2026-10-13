@@ -2,6 +2,10 @@
 
 namespace App\Exceptions;
 
-use RuntimeException;
-
-class PlanLimitExceededException extends RuntimeException {}
+class PlanLimitExceededException extends DomainConflictException
+{
+    public function __construct(string $message)
+    {
+        parent::__construct($message, 'PLAN_LIMIT_EXCEEDED');
+    }
+}

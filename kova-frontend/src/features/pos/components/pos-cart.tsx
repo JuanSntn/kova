@@ -58,6 +58,7 @@ type PosCartProps = {
 
     onClear: () => void
 
+    checkoutDisabled?: boolean
     onCheckout: () => void
 }
 
@@ -72,7 +73,7 @@ export function PosCart({
     onRemove,
     onClear,
     onCheckout,
-    checkingOut,
+    checkoutDisabled = false,
 }: PosCartProps) {
     const hasItems =
         items.length > 0
@@ -247,7 +248,7 @@ export function PosCart({
                     size="lg"
                     className="h-10 w-full"
                     disabled={
-                        !hasItems
+                        !hasItems || checkoutDisabled
                     }
                     onClick={
                         onCheckout

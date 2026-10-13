@@ -78,7 +78,8 @@ export function usePosFilters({
             ]
                 .filter(
                     (category) =>
-                        category.is_active,
+                        category.is_active &&
+                        category.can_use,
                 )
                 .sort(
                     (a, b) => {

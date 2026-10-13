@@ -3,11 +3,19 @@ export type Category = {
     name: string
     sort_order: number
     is_active: boolean
+    billing_enabled: boolean
+    locked_by_plan: boolean
+    can_edit: boolean
+    can_delete: boolean
+    can_use: boolean
+    lock_reason: string | null
 }
 
 export type ProductCategory = {
     id: string
     name: string
+    billing_enabled: boolean
+    locked_by_plan: boolean
 }
 
 export type Product = {
@@ -18,6 +26,13 @@ export type Product = {
     image_path: string | null
     sort_order: number
     is_active: boolean
+    preparation_station: 'kitchen' | 'bar' | 'none'
+    billing_enabled: boolean
+    locked_by_plan: boolean
+    can_edit: boolean
+    can_delete: boolean
+    can_use: boolean
+    lock_reason: string | null
     category: ProductCategory
     tax: {
         mode:
@@ -34,6 +49,12 @@ export type Product = {
             rate: string
         } | null
     }
+    fiscal: {
+        product_service_code: string | null
+        unit_code: string | null
+        unit_name: string | null
+        tax_object_code: string | null
+    }
 }
 
 /*
@@ -42,13 +63,17 @@ export type Product = {
 |--------------------------------------------------------------------------
 */
 
-export type ProductUsage = {
+export type CatalogUsage = {
     used: number
     limit: number | null
     remaining: number | null
     is_unlimited: boolean
     limit_reached: boolean
 }
+
+export type ProductUsage = CatalogUsage
+
+export type CategoryUsage = CatalogUsage
 
 export type ProductPlan = {
     code: string
@@ -61,6 +86,16 @@ export type ProductsResponse = {
     meta?: {
         plan: ProductPlan
         usage: ProductUsage
+        category_usage?: CategoryUsage
+    }
+}
+
+export type CategoriesResponse = {
+    data: Category[]
+
+    meta?: {
+        plan: ProductPlan
+        usage: CategoryUsage
     }
 }
 
@@ -98,6 +133,10 @@ export type CreateProductPayload = {
     sort_order?: number
 
     is_active: boolean
+    preparation_station: 'kitchen' | 'bar' | 'none'
+    sat_product_service_code?: string | null
+    sat_unit_code?: string | null
+    sat_tax_object_code?: string | null
 }
 
 

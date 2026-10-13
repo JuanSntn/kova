@@ -5,6 +5,7 @@ import {
 import {
     AlertCircleIcon,
     Building2Icon,
+    CheckCircle2Icon,
 } from 'lucide-react'
 
 import {
@@ -51,12 +52,10 @@ import {
 export function TicketSettingsPage() {
     const {
         activeTenant,
-    } =
-        useSession()
+    } = useSession()
 
     const tenantId =
-        activeTenant?.id ??
-        ''
+        activeTenant?.id ?? ''
 
     const queryClient =
         useQueryClient()
@@ -65,15 +64,17 @@ export function TicketSettingsPage() {
         useQuery({
             queryKey:
                 ticketSettingsQueryKeys.detail(
-                    tenantId
+                    tenantId,
                 ),
 
             queryFn:
                 getTicketSettings,
+            staleTime: 0,
+            refetchOnMount: 'always',
 
             enabled:
                 Boolean(
-                    tenantId
+                    tenantId,
                 ),
         })
 
@@ -87,24 +88,54 @@ export function TicketSettingsPage() {
             ) => {
                 queryClient.setQueryData(
                     ticketSettingsQueryKeys.detail(
-                        tenantId
+                        tenantId,
                     ),
                     response,
                 )
             },
         })
 
-    return (
-        <div className="space-y-5">
-            <div>
-                <h1 className="text-xl font-semibold tracking-tight">
-                    Ticket
-                </h1>
+    const configurationReady =
+        query.data?.meta
+            .configuration_ready ??
+        false
 
-                <p className="mt-1 text-sm text-muted-foreground">
-                    Personaliza el contenido y formato de tus tickets de venta.
-                </p>
+    return (
+        <div className="space-y-6">
+            {/*
+            |--------------------------------------------------------------------------
+            | Header
+            |--------------------------------------------------------------------------
+            */}
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                    <h1 className="text-xl font-semibold tracking-tight">
+                        Ticket
+                    </h1>
+
+                    <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                        Personaliza el contenido y formato de tus tickets
+                        de venta para mantener una presentación clara y
+                        consistente para tus clientes.
+                    </p>
+                </div>
+
+                {query.data &&
+                    configurationReady && (
+                        <div className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                            <CheckCircle2Icon className="size-4 text-emerald-600" />
+
+                            Configuración disponible
+                        </div>
+                    )}
             </div>
+
+            {/*
+            |--------------------------------------------------------------------------
+            | Query error
+            |--------------------------------------------------------------------------
+            */}
 
             {query.isError && (
                 <Alert variant="destructive">
@@ -116,53 +147,87 @@ export function TicketSettingsPage() {
                 </Alert>
             )}
 
+            {/*
+            |--------------------------------------------------------------------------
+            | Loading
+            |--------------------------------------------------------------------------
+            */}
+
             {query.isPending && (
-                <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
-                    <Skeleton className="h-[650px]" />
-                    <Skeleton className="h-[600px]" />
-                </div>
+                <TicketSettingsSkeleton />
             )}
 
+            {/*
+            |--------------------------------------------------------------------------
+            | Business profile required
+            |--------------------------------------------------------------------------
+            */}
+
             {query.data &&
-                !query.data.meta
-                    .configuration_ready && (
-                    <Card>
-                        <CardContent className="flex min-h-72 flex-col items-center justify-center p-8 text-center">
-                            <div className="flex size-11 items-center justify-center rounded-xl bg-muted">
-                                <Building2Icon className="size-5 text-muted-foreground" />
-                            </div>
+                !configurationReady && (
+                    <div className="space-y-5">
+                        <Alert>
+                            <AlertCircleIcon className="size-4" />
 
-                            <h2 className="mt-4 text-base font-semibold">
-                                Configura primero tu negocio
-                            </h2>
+                            <AlertDescription>
+                                Completa la información pública de tu negocio
+                                antes de personalizar tus tickets.
+                            </AlertDescription>
+                        </Alert>
 
-                            <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                                El ticket utiliza el nombre, teléfono y correo público configurados en la información de tu negocio.
-                            </p>
+                        <Card className="shadow-none">
+                            <CardContent className="p-5 sm:p-6">
+                                <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="flex min-w-0 items-start gap-4">
+                                        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                                            <Building2Icon className="size-5 text-muted-foreground" />
+                                        </div>
 
-                            {activeTenant && (
-                                <Button
-                                    asChild
-                                    className="mt-5"
-                                >
-                                    <Link
-                                        to="/$tenantSlug/settings/business"
-                                        params={{
-                                            tenantSlug:
-                                                activeTenant.slug,
-                                        }}
-                                    >
-                                        Configurar negocio
-                                    </Link>
-                                </Button>
-                            )}
-                        </CardContent>
-                    </Card>
+                                        <div className="min-w-0">
+                                            <h2 className="text-sm font-semibold">
+                                                Configura primero tu negocio
+                                            </h2>
+
+                                            <p className="mt-1 max-w-xl text-sm leading-6 text-muted-foreground">
+                                                El ticket utiliza el nombre,
+                                                teléfono y correo público
+                                                configurados en la información
+                                                de tu negocio.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {activeTenant && (
+                                        <Button
+                                            asChild
+                                            size="sm"
+                                            className="shrink-0"
+                                        >
+                                            <Link
+                                                to="/$tenantSlug/settings/business"
+                                                params={{
+                                                    tenantSlug:
+                                                        activeTenant.slug,
+                                                }}
+                                            >
+                                                Configurar negocio
+                                            </Link>
+                                        </Button>
+                                    )}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
                 )}
 
+            {/*
+            |--------------------------------------------------------------------------
+            | Ticket settings form
+            |--------------------------------------------------------------------------
+            */}
+
             {query.data &&
-                query.data.meta
-                    .configuration_ready && (
+                configurationReady && (
                     <TicketSettingsForm
                         response={
                             query.data
@@ -175,6 +240,16 @@ export function TicketSettingsPage() {
                         }
                     />
                 )}
+        </div>
+    )
+}
+
+function TicketSettingsSkeleton() {
+    return (
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+            <Skeleton className="h-[650px] w-full rounded-xl" />
+
+            <Skeleton className="h-[600px] w-full rounded-xl" />
         </div>
     )
 }

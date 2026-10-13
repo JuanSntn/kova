@@ -4,15 +4,15 @@ namespace App\Http\Controllers\Billing;
 
 use App\Domain\Billing\Contracts\BillingGateway;
 use App\Enums\PermissionName;
-use App\Enums\PlanCode;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Billing\CreateCheckoutRequest;
 use App\Services\Billing\BillingSummaryService;
+use App\Services\Subscriptions\BillingReconciler;
 use App\Tenancy\CurrentTenant;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class BillingController extends Controller
 {
@@ -45,7 +45,7 @@ class BillingController extends Controller
         );
 
         if ($operationId === '') {
-            $operationId = (string) \Illuminate\Support\Str::uuid();
+            $operationId = (string) Str::uuid();
         }
 
         try {
@@ -54,24 +54,55 @@ class BillingController extends Controller
 
                 user: $request->user(),
 
-                plan: PlanCode::from(
-                    $request
-                        ->string('plan')
-                        ->toString()
-                ),
+                plan: $request->string('plan')->toString(),
+                interval: $request->input('interval', 'month'),
+                offer: $request->input('offer_id'),
+                retainedBranches: $request->input('retained_branch_ids', []),
+                retainedMemberships: $request->input('retained_membership_ids', []),
 
                 operationId: $operationId,
             );
         } catch (DomainException $exception) {
             return response()->json([
-                'message' =>
-                $exception->getMessage(),
+                'message' => $exception->getMessage(),
             ], 409);
         }
 
         return response()->json([
             'url' => $url,
         ], 201);
+    }
+
+    public function reconcile(
+        Request $request,
+        CurrentTenant $currentTenant,
+        BillingReconciler $reconciler,
+    ): JsonResponse {
+        abort_unless($request->user()?->can(PermissionName::BillingManage->value), 403);
+
+        $ok = $reconciler->run($currentTenant->get());
+
+        return response()->json([
+            'status' => $ok ? 'reconciled' : 'reconciliation_required',
+        ], $ok ? 200 : 202);
+    }
+
+    public function cancelPendingCheckout(
+        Request $request,
+        CurrentTenant $currentTenant,
+        BillingReconciler $reconciler,
+    ): JsonResponse {
+        abort_unless($request->user()?->can(PermissionName::BillingManage->value), 403);
+
+        try {
+            $result = $reconciler->cancelPendingCheckout($currentTenant->get());
+        } catch (DomainException $exception) {
+            return response()->json([
+                'message' => $exception->getMessage(),
+            ], 409);
+        }
+
+        return response()->json($result);
     }
 
     public function portal(
@@ -98,7 +129,13 @@ class BillingController extends Controller
         abort_unless($request->user()?->can(PermissionName::BillingManage->value), 403);
 
         try {
-            $billing->cancelSubscription($currentTenant->get());
+            $data = $request->validate([
+                'retained_branch_ids' => ['sometimes', 'array'],
+                'retained_branch_ids.*' => ['uuid', 'distinct'],
+                'retained_membership_ids' => ['sometimes', 'array'],
+                'retained_membership_ids.*' => ['uuid', 'distinct'],
+            ]);
+            $billing->cancelSubscription($currentTenant->get(), $data['retained_branch_ids'] ?? [], $data['retained_membership_ids'] ?? []);
 
             return response()->json([
                 'message' => 'Suscripción cancelada. El acceso se mantendrá hasta el final del periodo actual.',

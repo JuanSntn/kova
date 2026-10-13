@@ -1,6 +1,8 @@
-import type {
-    TicketDocument,
-} from './types'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { QRCodeSVG } from 'qrcode.react'
+
+import type { TicketDocument } from './types'
 
 import {
     formatTicketDateTime,
@@ -79,10 +81,6 @@ export async function printTicket(
             printDocument,
         )
 
-        /*
-         * Dejamos que el navegador
-         * termine layout/fuentes/imágenes.
-         */
         await delay(
             100,
         )
@@ -90,10 +88,6 @@ export async function printTicket(
         printWindow.focus()
         printWindow.print()
     } finally {
-        /*
-         * print() normalmente bloquea
-         * mientras está abierto el diálogo.
-         */
         window.setTimeout(
             () => {
                 iframe.remove()
@@ -104,14 +98,12 @@ export async function printTicket(
 }
 
 function buildTicketHtml(
-    ticket:
-        TicketDocument,
+    ticket: TicketDocument,
 ): string {
     const paperWidth =
         ticket.settings
             .printing
-            .paper_width_mm ===
-            58
+            .paper_width_mm === 58
             ? 58
             : 80
 
@@ -137,12 +129,9 @@ function buildTicketHtml(
         )
 
     const copiesMarkup =
-        Array.from(
-            {
-                length:
-                    copies,
-            },
-        )
+        Array.from({
+            length: copies,
+        })
             .map(
                 () => `
                     <section class="ticket-copy">
@@ -166,8 +155,7 @@ function buildTicketHtml(
 
                 <title>
                     Ticket ${escapeHtml(
-        ticket.sale.folio ??
-        '',
+        ticket.sale.folio ?? '',
     )}
                 </title>
 
@@ -185,10 +173,8 @@ function buildTicketHtml(
                     body {
                         margin: 0;
                         padding: 0;
-
                         color: #000;
                         background: #fff;
-
                         font-family:
                             Arial,
                             Helvetica,
@@ -198,7 +184,6 @@ function buildTicketHtml(
                     body {
                         width: ${contentWidth}mm;
                         margin: 0 auto;
-
                         font-size: 11px;
                         line-height: 1.4;
                     }
@@ -218,25 +203,19 @@ function buildTicketHtml(
 
                     .business-logo {
                         display: block;
-
                         max-width: 34mm;
                         max-height: 16mm;
-
-                        margin:
-                            0 auto
-                            8px;
+                        margin: 0 auto 8px;
                     }
 
                     .business-name {
                         margin: 0;
-
                         font-size: 15px;
                         font-weight: 700;
                     }
 
                     .small {
                         margin: 2px 0;
-
                         font-size: 10px;
                     }
 
@@ -246,23 +225,14 @@ function buildTicketHtml(
 
                     .separator {
                         margin: 10px 0;
-
-                        border-top:
-                            1px dashed
-                            #000;
+                        border-top: 1px dashed #000;
                     }
 
                     .row {
                         display: flex;
-
-                        align-items:
-                            flex-start;
-
-                        justify-content:
-                            space-between;
-
+                        align-items: flex-start;
+                        justify-content: space-between;
                         gap: 8px;
-
                         margin: 3px 0;
                     }
 
@@ -271,8 +241,7 @@ function buildTicketHtml(
                     }
 
                     .item {
-                        padding:
-                            4px 0;
+                        padding: 4px 0;
                     }
 
                     .item-name {
@@ -281,29 +250,49 @@ function buildTicketHtml(
 
                     .item-detail {
                         display: flex;
-
-                        justify-content:
-                            space-between;
-
+                        justify-content: space-between;
                         gap: 8px;
-
-                        margin-top:
-                            2px;
+                        margin-top: 2px;
                     }
 
                     .item-total {
                         flex-shrink: 0;
-
                         font-weight: 600;
+                    }
+
+                    .modifier-detail {
+                        display: flex;
+                        align-items: flex-start;
+                        justify-content: space-between;
+                        gap: 8px;
+                        margin-top: 3px;
+                        padding-left: 6px;
+                        font-size: 9px;
+                    }
+
+                    .modifier-name {
+                        min-width: 0;
+                        overflow-wrap: anywhere;
+                    }
+
+                    .modifier-price {
+                        flex-shrink: 0;
+                    }
+
+                    .item-line-total {
+                        display: flex;
+                        justify-content: space-between;
+                        gap: 8px;
+                        margin-top: 5px;
+                        padding-top: 4px;
+                        border-top: 1px dotted #000;
+                        font-size: 9px;
                     }
 
                     .total {
                         margin-top: 8px;
                         padding-top: 8px;
-
-                        border-top:
-                            1px solid #000;
-
+                        border-top: 1px solid #000;
                         font-size: 14px;
                         font-weight: 700;
                     }
@@ -312,12 +301,66 @@ function buildTicketHtml(
                         text-align: center;
                     }
 
-                    img {
-                        print-color-adjust:
-                            exact;
+                    .invoice-qr {
+                        text-align: center;
+                    }
 
-                        -webkit-print-color-adjust:
-                            exact;
+                    .invoice-qr svg {
+                        display: block;
+                        width: 28mm;
+                        height: 28mm;
+                        margin: 0 auto;
+                    }
+
+                    .invoice-qr-text {
+                        max-width: 44mm;
+                        margin: 6px auto 0;
+                        font-size: 9px;
+                        line-height: 1.35;
+                        text-align: center;
+                    }
+
+                    .invoice-access {
+                        margin-top: 8px;
+                        text-align: center;
+                    }
+
+                    .invoice-access-label {
+                        margin: 0;
+                        font-size: 8px;
+                        line-height: 1.3;
+                    }
+
+                    .invoice-access-code {
+                        margin: 2px 0 0;
+                        font-family:
+                            "Courier New",
+                            monospace;
+                        font-size: 8px;
+                        font-weight: 700;
+                        letter-spacing: 0.5px;
+                    }
+
+                    .invoice-entry {
+                        margin-top: 7px;
+                        font-size: 8px;
+                        line-height: 1.35;
+                        text-align: center;
+                    }
+
+                    .invoice-entry p {
+                        margin: 0;
+                    }
+
+                    .invoice-entry-url {
+                        margin-top: 2px !important;
+                        font-weight: 600;
+                        word-break: break-all;
+                    }
+
+                    img {
+                        print-color-adjust: exact;
+                        -webkit-print-color-adjust: exact;
                     }
                 </style>
             </head>
@@ -330,11 +373,11 @@ function buildTicketHtml(
 }
 
 function renderTicket(
-    ticket:
-        TicketDocument,
+    ticket: TicketDocument,
 ): string {
     const {
         business,
+        branch,
         sale,
         settings,
         timezone,
@@ -365,6 +408,17 @@ function renderTicket(
             )}
                 </p>
             `
+            : '',
+
+        visibility.branch_name && branch
+            ? `<p class="small"><strong>Sucursal ${escapeHtml(branch.name)}</strong></p>`
+            : '',
+
+        visibility.address && branch
+            ? `<p class="small">${escapeHtml([
+                [branch.street, branch.exterior_number, branch.interior_number ? `Int. ${branch.interior_number}` : null].filter(Boolean).join(' '),
+                [branch.neighborhood, branch.city, branch.postal_code ? `CP ${branch.postal_code}` : null].filter(Boolean).join(', '),
+            ].filter(Boolean).join(' · '))}</p>`
             : '',
 
         visibility.phone &&
@@ -441,7 +495,11 @@ function renderTicket(
     const items =
         sale.items
             .map(
-                item => `
+                item => {
+                    const modifiers = item.modifiers ?? []
+                    const baseUnitPrice = item.base_unit_price ?? item.unit_price
+
+                    return `
                     <div class="item">
                         <div class="item-name">
                             ${escapeHtml(
@@ -454,23 +512,40 @@ function renderTicket(
                                 ${visibility.unit_price
                         ? `${item.quantity} × ${escapeHtml(
                             formatTicketMoney(
-                                item.unit_price,
+                                baseUnitPrice,
                             ),
                         )}`
                         : `${item.quantity} pza`
                     }
                             </span>
 
-                            <span class="item-total">
+                            ${visibility.unit_price ? `<span class="item-total">
                                 ${escapeHtml(
-                        formatTicketMoney(
-                            item.line_total,
-                        ),
-                    )}
-                            </span>
+                    formatTicketMoney(
+                        baseUnitPrice * item.quantity,
+                    ),
+                )}
+                            </span>` : ''}
                         </div>
+
+                        ${modifiers.map(modifier => `
+                            <div class="modifier-detail">
+                                <span class="modifier-name">
+                                    + ${escapeHtml(modifier.group_name ? `${modifier.group_name} · ${modifier.option_name}` : modifier.option_name)}
+                                </span>
+                                ${visibility.unit_price ? `<span class="modifier-price">+${escapeHtml(formatTicketMoney(modifier.price_adjustment * item.quantity))}</span>` : ''}
+                            </div>
+                        `).join('')}
+
+                        ${modifiers.length > 0 ? `
+                            <div class="item-line-total">
+                                <span>Total producto</span>
+                                <span class="item-total">${escapeHtml(formatTicketMoney(item.line_total))}</span>
+                            </div>
+                        ` : !visibility.unit_price ? `<div class="item-detail"><span></span><span class="item-total">${escapeHtml(formatTicketMoney(item.line_total))}</span></div>` : ''}
                     </div>
-                `,
+                `
+                },
             )
             .join('')
 
@@ -546,8 +621,12 @@ function renderTicket(
     ].join('')
 
     const hasPayment =
-        paymentRows.trim() !==
-        ''
+        paymentRows.trim() !== ''
+
+    const invoiceQr =
+        renderInvoiceQr(
+            ticket,
+        )
 
     return `
         <div class="center">
@@ -575,6 +654,8 @@ function renderTicket(
             : ''
         }
 
+        ${invoiceQr}
+
         ${settings.additional_text
             ? `
                     <div class="separator"></div>
@@ -600,6 +681,93 @@ function renderTicket(
                 `
             : ''
         }
+    `
+}
+
+function renderInvoiceQr(
+    ticket: TicketDocument,
+): string {
+    const invoice =
+        ticket.settings.invoice
+
+    if (
+        !invoice.show_qr ||
+        !invoice.url
+    ) {
+        return ''
+    }
+
+    const qrMarkup =
+        renderToStaticMarkup(
+            createElement(
+                QRCodeSVG,
+                {
+                    value:
+                        invoice.url,
+
+                    size:
+                        180,
+
+                    level:
+                        'M',
+
+                    marginSize:
+                        1,
+                },
+            ),
+        )
+
+    const qrText =
+        invoice.qr_text?.trim()
+        ||
+        'Escanea para solicitar tu factura.'
+
+    return `
+        <div class="separator"></div>
+
+        <div class="invoice-qr">
+            ${qrMarkup}
+
+            <p class="invoice-qr-text">
+                ${escapeHtml(
+        qrText,
+    )}
+            </p>
+
+            ${invoice.access_code
+            ? `
+                        <div class="invoice-access">
+                            <p class="invoice-access-label">
+                                Código de facturación
+                            </p>
+
+                            <p class="invoice-access-code">
+                                ${escapeHtml(
+                invoice.access_code,
+            )}
+                            </p>
+                        </div>
+                    `
+            : ''
+        }
+
+            ${invoice.entry_url
+            ? `
+                        <div class="invoice-entry">
+                            <p>
+                                También puedes ingresar en:
+                            </p>
+
+                            <p class="invoice-entry-url">
+                                ${escapeHtml(
+                invoice.entry_url,
+            )}
+                            </p>
+                        </div>
+                    `
+            : ''
+        }
+        </div>
     `
 }
 
@@ -666,8 +834,7 @@ function escapeHtml(
 }
 
 async function waitForImages(
-    document:
-        Document,
+    document: Document,
 ): Promise<void> {
     const images =
         Array.from(
@@ -675,8 +842,7 @@ async function waitForImages(
         )
 
     if (
-        images.length ===
-        0
+        images.length === 0
     ) {
         return
     }
@@ -710,10 +876,6 @@ async function waitForImages(
                 undefined,
         )
 
-    /*
-     * Nunca bloquear impresión
-     * indefinidamente por un logo.
-     */
     await Promise.race([
         loading,
         delay(

@@ -66,7 +66,9 @@ export function requireAbility(requiredAbility: string) {
 }
 
 const navigationAbilityMap: Record<string, string | null> = {
+  inventory: 'inventory.view',
   billing: 'billing.view',
+  'branches-settings': 'business_settings.view',
   categories: 'categories.view',
   products: 'products.view',
   taxes: 'taxes.view',

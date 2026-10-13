@@ -5,7 +5,7 @@ use App\Http\Controllers\Settings\TicketSettingsController;
 
 Route::middleware([
     'auth:sanctum',
-    'verified',
+    'account-access',
     'tenant',
 ])
     ->prefix('settings/ticket')

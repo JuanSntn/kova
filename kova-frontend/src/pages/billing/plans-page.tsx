@@ -1,408 +1,676 @@
-import { CheckIcon, ChevronRightIcon } from 'lucide-react'
+import {
+  useMemo,
+  useState,
+} from 'react'
 
-import { Button } from '@/components/ui/button'
+import {
+  CheckIcon,
+} from 'lucide-react'
+
+import {
+  Badge,
+} from '@/components/ui/badge'
+
+import {
+  Button,
+} from '@/components/ui/button'
+
 import {
   Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Separator } from '@/components/ui/separator'
-import { Skeleton } from '@/components/ui/skeleton'
+
 import type {
+  BillingInterval,
   BillingPlan,
   BillingSummary,
-  PlanCode,
+  OfferPrice,
 } from '@/features/billing/api'
 
-type PaidPlanCode = Exclude<PlanCode, 'free'>
-
-type PlansPageProps = {
-  onCancelConfirmation: () => void
-  onConfirmPlan: (plan: PaidPlanCode) => void
-  onSelectPlan: (plan: PaidPlanCode) => void
-  pendingPlan: PlanCode | null
-  planToConfirm: PaidPlanCode | null
-  summary: BillingSummary | null
-}
+import {
+  money,
+} from '@/features/billing/presentation'
 
 export function PlansPage({
-  onCancelConfirmation,
-  onConfirmPlan,
-  onSelectPlan,
-  pendingPlan,
-  planToConfirm,
+  offers,
   summary,
-}: PlansPageProps) {
-  if (!summary) {
-    return (
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {[1, 2, 3].map((item) => (
-          <Skeleton
-            className="h-[25rem] rounded-xl"
-            key={item}
-          />
-        ))}
-      </div>
+  disabled,
+  onSelect,
+}: {
+  offers: BillingPlan[]
+
+  summary: BillingSummary
+
+  disabled: boolean
+
+  onSelect: (
+    plan: BillingPlan,
+    price: OfferPrice,
+  ) => void
+}) {
+  const [
+    interval,
+    setInterval,
+  ] =
+    useState<BillingInterval>(
+      summary.contract
+        ?.interval
+      ?? 'month',
     )
-  }
 
   const currentPlan =
-    summary.current_subscription?.plan ?? 'free'
+    offers.find(
+      (plan) =>
+        plan.code
+        === summary.current_plan,
+    )
 
-  const confirmationIsUpgrade = planToConfirm
-    ? isPlanUpgrade(currentPlan, planToConfirm)
-    : false
+  const annualAvailable =
+    offers.some(
+      (plan) =>
+        plan.prices.some(
+          (price) =>
+            price.interval
+            === 'year'
+            && price.available,
+        ),
+    )
 
-  const confirmationPending =
-    planToConfirm !== null && pendingPlan === planToConfirm
+  const sortedOffers =
+    useMemo(
+      () =>
+        [
+          ...offers,
+        ].sort(
+          (
+            a,
+            b,
+          ) =>
+            a.tier
+            - b.tier,
+        ),
+      [
+        offers,
+      ],
+    )
 
   return (
-    <>
-      <div className="space-y-6">
-        <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {summary.plans.map((plan) => (
-            <PlanCard
-              current={currentPlan === plan.code}
-              currentPlan={currentPlan}
-              disabled={pendingPlan !== null}
-              key={plan.code}
-              onSelect={onSelectPlan}
-              pending={pendingPlan === plan.code}
-              plan={plan}
-            />
-          ))}
-        </div>
-
-        <p className="text-xs leading-5 text-muted-foreground">
-          Los precios se muestran en pesos mexicanos y no incluyen IVA.
-          Los cambios de un plan de pago a otro pueden generar ajustes
-          calculados por Stripe.
+    <section className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Compara los planes disponibles
+          para tu negocio.
         </p>
+
+        <div className="flex rounded-lg border p-1">
+          <Button
+            size="sm"
+            variant={
+              interval === 'month'
+                ? 'secondary'
+                : 'ghost'
+            }
+            onClick={() =>
+              setInterval(
+                'month',
+              )
+            }
+          >
+            Mensual
+          </Button>
+
+          <Button
+            size="sm"
+            variant={
+              interval === 'year'
+                ? 'secondary'
+                : 'ghost'
+            }
+            disabled={
+              !annualAvailable
+            }
+            onClick={() =>
+              setInterval(
+                'year',
+              )
+            }
+          >
+            Anual
+          </Button>
+        </div>
       </div>
 
-      <Dialog
-        open={planToConfirm !== null}
-        onOpenChange={(open) => {
-          if (!open && pendingPlan === null) {
-            onCancelConfirmation()
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {confirmationIsUpgrade
-                ? 'Confirma la mejora de plan'
-                : 'Confirma el cambio de plan'}
-            </DialogTitle>
-
-            <DialogDescription className="text-xs leading-5">
-              {planToConfirm && (
-                <>
-                  {confirmationIsUpgrade
-                    ? 'Mejorarás'
-                    : 'Cambiarás'}{' '}
-                  de{' '}
-                  <span className="font-medium text-foreground">
-                    {planName(summary, currentPlan)}
-                  </span>{' '}
-                  a{' '}
-                  <span className="font-medium text-foreground">
-                    {planName(summary, planToConfirm)}
-                  </span>
-                  .
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="rounded-lg border bg-muted/40 p-4">
-            <p className="text-sm font-medium">
-              Ajuste del periodo actual
-            </p>
-
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Stripe calculará automáticamente el importe proporcional.
-              Dependiendo del cambio, puede aplicarse un cargo o un
-              crédito.
-            </p>
+      {offers.length === 0 ? (
+        <Card className="gap-0 py-0 shadow-none">
+          <div className="p-5 text-sm text-muted-foreground">
+            No hay ofertas publicadas
+            por el momento.
           </div>
+        </Card>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-3">
+          {sortedOffers.map(
+            (plan) => {
+              const price =
+                plan.prices.find(
+                  (
+                    candidate,
+                  ) =>
+                    candidate
+                      .interval
+                    === interval,
+                )
+                ?? (
+                  interval
+                    === 'month'
+                    ? plan.prices.find(
+                      (
+                        candidate,
+                      ) =>
+                        candidate
+                          .amount
+                        === 0,
+                    )
+                    : undefined
+                )
 
-          <DialogFooter>
-            <Button
-              variant="outline"
-              disabled={pendingPlan !== null}
-              onClick={onCancelConfirmation}
-            >
-              Cancelar
-            </Button>
+              const current =
+                price
+                  ?.offer_id
+                === summary
+                  .contract
+                  ?.offer_id
 
-            <Button
-              disabled={!planToConfirm || pendingPlan !== null}
-              onClick={() => {
-                if (planToConfirm) {
-                  onConfirmPlan(planToConfirm)
-                }
-              }}
-            >
-              {confirmationPending
-                ? 'Procesando...'
-                : confirmationIsUpgrade
-                  ? 'Confirmar mejora'
-                  : 'Confirmar cambio'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+              const behavior =
+                getBehavior(
+                  plan,
+                  price,
+                  currentPlan,
+                  summary,
+                  current,
+                )
+
+              return (
+                <PlanCard
+                  key={
+                    plan.version
+                  }
+                  plan={
+                    plan
+                  }
+                  price={
+                    price
+                  }
+                  current={
+                    current
+                  }
+                  behavior={
+                    behavior
+                  }
+                  disabled={
+                    disabled
+                  }
+                  onSelect={
+                    onSelect
+                  }
+                />
+              )
+            },
+          )}
+        </div>
+      )}
+
+      <p className="text-xs leading-5 text-muted-foreground">
+        Los upgrades dentro de la
+        misma periodicidad se aplican
+        inmediatamente. Los downgrades
+        y cambios de periodicidad se
+        aplican al terminar el periodo
+        actual.
+      </p>
+    </section>
   )
 }
 
+/*
+|--------------------------------------------------------------------------
+| Plan card
+|--------------------------------------------------------------------------
+*/
+
 function PlanCard({
+  plan,
+  price,
   current,
-  currentPlan,
+  behavior,
   disabled,
   onSelect,
-  pending,
-  plan,
 }: {
-  current: boolean
-  currentPlan: PlanCode
-  disabled: boolean
-  onSelect: (plan: PaidPlanCode) => void
-  pending: boolean
   plan: BillingPlan
+
+  price?: OfferPrice
+
+  current: boolean
+
+  behavior:
+  ChangeBehavior
+
+  disabled: boolean
+
+  onSelect: (
+    plan: BillingPlan,
+    price: OfferPrice,
+  ) => void
 }) {
-  const presentation = planPresentation(plan.code)
-  const features = planFeatures(plan)
-  const isFreePlan = plan.code === 'free'
+  const features =
+    buildFeatures(
+      plan,
+    )
+
+  const unavailable =
+    !price
+    || !price.available
 
   return (
-    <Card
-      className={[
-        'h-full gap-0 py-0 shadow-none',
-        current ? 'ring-2 ring-primary' : '',
-      ].join(' ')}
-    >
-      <CardHeader className="gap-0 px-4 pb-4 pt-4">
-        <div className="flex min-h-12 items-start justify-between gap-3">
-          <div>
-            <CardTitle className="text-base tracking-tight">
-              {plan.name}
-            </CardTitle>
+    <Card className="flex gap-0 overflow-hidden py-0 shadow-none">
+      <header className="flex items-start justify-between gap-3 border-b px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold">
+            {plan.name}
+          </h2>
 
-            <CardDescription className="mt-0.5 max-w-64 text-xs leading-4">
-              {presentation.description}
-            </CardDescription>
-          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {planDescription(
+              plan.code,
+            )}
+          </p>
+        </div>
 
-          {current && (
-            <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-              Plan actual
-            </span>
+        {current && (
+          <Badge variant="secondary">
+            Actual
+          </Badge>
+        )}
+      </header>
+
+      <div className="flex flex-1 flex-col p-5">
+        <div>
+          {price ? (
+            <>
+              <p className="text-xl font-semibold tracking-tight">
+                {price.amount === 0
+                  ? 'Gratis'
+                  : money(
+                    price.amount,
+                    price.currency,
+                  )}
+              </p>
+
+              {price.amount > 0 && (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  /{' '}
+                  {price.interval
+                    === 'year'
+                    ? 'año'
+                    : 'mes'}{' '}
+                  + impuestos
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Sin oferta disponible
+            </p>
           )}
         </div>
 
-        <div className="mt-4 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <span className="text-2xl font-semibold tracking-tight">
-            {formatMoney(plan.monthly_price)}
-          </span>
-
-          <span className="text-xs text-muted-foreground">
-            / mes
-          </span>
-
-          <span className="ml-auto text-xs text-muted-foreground">
-            + IVA
-          </span>
-        </div>
-
-        {isFreePlan || current ? (
-          <Button
-            className="mt-4 h-8 w-full"
-            variant="outline"
-            disabled
-          >
-            {current
-              ? 'Tu plan actual'
-              : 'Incluido al registrarte'}
-          </Button>
-        ) : (
-          <Button
-            className="mt-4 h-8 w-full"
-            disabled={disabled}
-            onClick={() =>
-              onSelect(plan.code as PaidPlanCode)
-            }
-          >
-            {pending
-              ? 'Preparando cambio...'
-              : isPlanUpgrade(currentPlan, plan.code)
-                ? `Mejorar a ${plan.name}`
-                : `Cambiar a ${plan.name}`}
-
-            {!pending && (
-              <ChevronRightIcon aria-hidden />
-            )}
-          </Button>
-        )}
-      </CardHeader>
-
-      <CardContent className="flex flex-1 flex-col px-4 pb-4">
-        <Separator className="mb-4" />
-
-        <p className="text-xs font-medium">
-          {presentation.includedTitle}
-        </p>
-
-        <ul className="mt-3 space-y-2 text-xs">
-          {features.map((feature) => (
-            <li
-              className="flex items-start gap-2.5"
-              key={feature}
-            >
-              <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/10">
+        <ul className="mt-5 flex-1 space-y-2.5 border-t pt-4">
+          {features.map(
+            (
+              feature,
+            ) => (
+              <li
+                key={
+                  feature
+                }
+                className="flex gap-2 text-xs leading-5"
+              >
                 <CheckIcon
-                  className="size-3 text-primary"
-                  strokeWidth={2}
+                  className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
                   aria-hidden
                 />
-              </span>
 
-              <span className="leading-4 text-muted-foreground">
-                {feature}
-              </span>
-            </li>
-          ))}
+                <span>
+                  {feature}
+                </span>
+              </li>
+            ),
+          )}
         </ul>
 
-        {plan.additional_stamp_price && (
-          <p className="mt-auto border-t pt-4 text-[11px] leading-4 text-muted-foreground">
-            Timbre excedente:{' '}
-            {formatMoney(plan.additional_stamp_price)} + IVA.
-            {plan.additional_branch_price
-              ? ` Sucursal adicional: ${formatMoney(
-                  plan.additional_branch_price,
-                )} + IVA.`
-              : ''}
-          </p>
-        )}
-      </CardContent>
+        {!current
+          && price?.available
+          && (
+            <p className="mt-4 border-t pt-3 text-xs leading-5 text-muted-foreground">
+              {behaviorText(
+                behavior,
+              )}
+            </p>
+          )}
+
+        <Button
+          size="sm"
+          className="mt-4 w-full"
+          variant={
+            current
+              ? 'outline'
+              : 'default'
+          }
+          disabled={
+            disabled
+            || unavailable
+            || current
+          }
+          onClick={() => {
+            if (
+              price
+            ) {
+              onSelect(
+                plan,
+                price,
+              )
+            }
+          }}
+        >
+          {current
+            ? 'Plan actual'
+            : unavailable
+              ? 'No disponible'
+              : behavior
+                === 'upgrade'
+                ? 'Mejorar plan'
+                : behavior
+                  === 'period_end'
+                  ? 'Programar cambio'
+                  : price?.amount
+                    === 0
+                    ? 'Cambiar a Free'
+                    : 'Seleccionar'}
+        </Button>
+      </div>
     </Card>
   )
 }
 
-function planLevel(code: PlanCode) {
-  const levels: Record<PlanCode, number> = {
-    free: 0,
-    business: 1,
-    restaurant: 2,
+/*
+|--------------------------------------------------------------------------
+| Behavior
+|--------------------------------------------------------------------------
+*/
+
+type ChangeBehavior =
+  | 'initial'
+  | 'upgrade'
+  | 'period_end'
+  | 'free'
+  | 'current'
+
+function getBehavior(
+  plan: BillingPlan,
+  price:
+    OfferPrice
+    | undefined,
+  currentPlan:
+    BillingPlan
+    | undefined,
+  summary:
+    BillingSummary,
+  current: boolean,
+): ChangeBehavior {
+  if (current) {
+    return 'current'
   }
 
-  return levels[code]
+  if (!price) {
+    return 'period_end'
+  }
+
+  const hasPaidPlan =
+    (
+      summary.contract
+        ?.amount
+      ?? 0
+    ) > 0
+
+  /*
+   * Free -> paid
+   */
+  if (
+    !hasPaidPlan
+  ) {
+    return 'initial'
+  }
+
+  /*
+   * Paid -> Free
+   */
+  if (
+    price.amount
+    === 0
+  ) {
+    return 'free'
+  }
+
+  /*
+   * Cambio de periodicidad:
+   * period_end.
+   */
+  if (
+    summary.contract
+      ?.interval
+    && price.interval
+    !== summary.contract
+      .interval
+  ) {
+    return 'period_end'
+  }
+
+  /*
+   * Misma periodicidad
+   * + mayor tier:
+   *
+   * immediate upgrade.
+   */
+  if (
+    plan.tier
+    > (
+      currentPlan
+        ?.tier
+      ?? 0
+    )
+  ) {
+    return 'upgrade'
+  }
+
+  return 'period_end'
 }
 
-function isPlanUpgrade(
-  currentPlan: PlanCode,
-  targetPlan: PlanCode,
+function behaviorText(
+  behavior:
+    ChangeBehavior,
 ) {
-  return planLevel(targetPlan) > planLevel(currentPlan)
+  if (
+    behavior
+    === 'upgrade'
+  ) {
+    return 'Se aplica de inmediato y puede generar un ajuste proporcional.'
+  }
+
+  if (
+    behavior
+    === 'period_end'
+    || behavior
+    === 'free'
+  ) {
+    return 'Se aplicará al finalizar tu periodo actual.'
+  }
+
+  return 'Se activa después de confirmar el pago.'
 }
 
-function planPresentation(code: PlanCode) {
-  return {
-    free: {
-      description:
-        'Para comenzar con una operación sencilla.',
-      includedTitle: 'Funciones esenciales:',
-    },
-    business: {
-      description:
-        'Para comercios que necesitan mayor control.',
-      includedTitle: 'Todo lo de Free, más:',
-    },
-    restaurant: {
-      description:
-        'Para restaurantes con una operación completa.',
-      includedTitle: 'Todo lo de Negocio, más:',
-    },
-  }[code]
-}
+/*
+|--------------------------------------------------------------------------
+| Benefits
+|--------------------------------------------------------------------------
+*/
 
-function planFeatures(plan: BillingPlan) {
-  const branchLabel =
-    plan.included_branches === 1
-      ? '1 sucursal incluida'
-      : `${plan.included_branches} sucursales incluidas`
+function buildFeatures(
+  plan:
+    BillingPlan,
+) {
+  const features = [
+    plan.max_users
+      === null
+      ? 'Equipo sin límite con roles por área'
+      : plan.max_users === 1
+        ? 'Solo el dueño'
+        : plan.max_users === 5
+          ? '5 usuarios: dueño, caja, mesero, cocina y barra'
+          : `${plan.max_users} usuarios con acceso por rol`,
 
-  const limits = [
-    plan.max_users === null
-      ? 'Usuarios ilimitados'
-      : `${plan.max_users} ${
-          plan.max_users === 1 ? 'usuario' : 'usuarios'
-        }`,
-    plan.max_products === null
-      ? 'Productos ilimitados'
-      : `${plan.max_products.toLocaleString(
-          'es-MX',
-        )} productos`,
-    plan.monthly_sales_limit === null
+    plan.max_products
+      === null
+      ? 'Productos sin límite'
+      : `${plan.max_products} ${plan.max_products
+        === 1
+        ? 'producto'
+        : 'productos'
+      }`,
+
+    plan.max_categories
+      === null
+      ? 'Categorías sin límite'
+      : `${plan.max_categories} ${plan.max_categories
+        === 1
+        ? 'categoría'
+        : 'categorías'
+      }`,
+
+    plan.included_branches
+      === null
+      ? 'Sucursales sin límite'
+      : `${plan.included_branches} ${plan.included_branches
+        === 1
+        ? 'sucursal'
+        : 'sucursales'
+      }`,
+
+    plan.monthly_sales_limit
+      === null
       ? 'Ventas mensuales sin límite'
-      : `Hasta ${formatMoney(
-          plan.monthly_sales_limit,
-        )} en ventas al mes`,
-    branchLabel,
+      : `Ventas hasta ${formatSalesLimit(
+        plan.monthly_sales_limit,
+      )} al mes`,
   ]
 
-  if (plan.code === 'free') {
-    return [...limits, 'Órdenes de mostrador']
+  if (plan.additional_branch_price !== null) {
+    features.push(
+      `Sucursales adicionales por ${formatSalesLimit(
+        plan.additional_branch_price,
+      )} al mes`,
+    )
   }
 
-  return [
-    ...limits,
-    `${plan.included_stamps.toLocaleString(
-      'es-MX',
-    )} timbres incluidos`,
-    plan.allows_inventory && 'Control de inventario',
-    plan.allows_invoicing &&
-      'Facturación electrónica',
-    plan.allows_table_orders && 'Órdenes por mesa',
-  ].filter(
-    (feature): feature is string => Boolean(feature),
-  )
-}
-
-function formatMoney(value: string) {
-  const amount = Number(value)
-
-  if (!Number.isFinite(amount)) {
-    return '$0'
+  if (plan.max_users === null || plan.max_users > 1) {
+    features.push(
+      'Cada usuario entra con su propio acceso',
+      'Ventas y turnos identificados por responsable',
+    )
   }
 
-  return new Intl.NumberFormat('es-MX', {
-    style: 'currency',
-    currency: 'MXN',
-    maximumFractionDigits:
-      amount % 1 === 0 ? 0 : 2,
-  }).format(amount)
+  if (plan.allows_counter_orders) {
+    features.push(
+      'Punto de venta, menú y modificadores',
+      'Resumen e historial de ventas',
+    )
+  }
+
+  if (plan.allows_cash_shifts) {
+    features.push(
+      'Caja y turnos por responsable',
+    )
+  }
+
+  if (plan.allows_preparation) {
+    features.push(
+      plan.max_preparation_stations === null
+        ? 'KDS separados para Cocina y Barra'
+        : 'Cocina y Barra trabajan una comanda compartida',
+    )
+  }
+
+  if (plan.allows_inventory) {
+    features.push(
+      'Inventario completo: recetas, producción, ajustes y merma',
+    )
+  }
+
+  if (plan.allows_invoicing) {
+    const stamps = plan.included_stamps === null
+      ? 'timbres sin límite'
+      : `${plan.included_stamps} timbres al mes`
+
+    features.push(
+      `Facturación fiscal con ${stamps}`,
+    )
+  }
+
+  return features
 }
 
-function planName(
-  summary: BillingSummary,
-  code?: PlanCode,
+/*
+|--------------------------------------------------------------------------
+| Presentation
+|--------------------------------------------------------------------------
+*/
+
+function planDescription(
+  code: string,
 ) {
-  return (
-    summary.plans.find((plan) => plan.code === code)
-      ?.name ?? 'tu plan actual'
+  return {
+    free:
+      'Para una persona que administra y vende directamente.',
+
+    business:
+      'Para un equipo pequeño que necesita control completo de inventario.',
+
+    restaurant:
+      'Para operaciones con Cocina y Barra separadas.',
+  }[code]
+    ?? 'Funciones para tu operación.'
+}
+
+function formatSalesLimit(
+  value:
+    string | number,
+) {
+  const amount =
+    Number(
+      value,
+    )
+
+  return new Intl.NumberFormat(
+    'es-MX',
+    {
+      style:
+        'currency',
+
+      currency:
+        'MXN',
+
+      maximumFractionDigits:
+        0,
+    },
+  ).format(
+    amount,
   )
 }

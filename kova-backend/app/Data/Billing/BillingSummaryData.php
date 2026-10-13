@@ -7,11 +7,11 @@ use JsonSerializable;
 final readonly class BillingSummaryData implements JsonSerializable
 {
     /**
-     * @param array<string, mixed>|null $currentSubscription
-     * @param array<string, mixed>|null $paymentMethod
-     * @param array<string, mixed>|null $billingDetails
-     * @param array<string, mixed> $stripe
-     * @param array<int, array<string, mixed>> $plans
+     * @param  array<string, mixed>|null  $currentSubscription
+     * @param  array<string, mixed>|null  $paymentMethod
+     * @param  array<string, mixed>|null  $billingDetails
+     * @param  array<string, mixed>  $stripe
+     * @param  array<int, array<string, mixed>>  $plans
      */
     public function __construct(
         public string $currentPlan,
@@ -22,8 +22,8 @@ final readonly class BillingSummaryData implements JsonSerializable
         public array $actions,
         public array $stripe,
         public array $plans,
-    ) {
-    }
+        public array $commercial = [],
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -39,6 +39,7 @@ final readonly class BillingSummaryData implements JsonSerializable
             'actions' => $this->actions,
             'stripe' => $this->stripe,
             'plans' => $this->plans,
+            ...$this->commercial,
         ];
     }
 

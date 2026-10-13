@@ -3,1165 +3,444 @@
 namespace App\Domain\Billing;
 
 use App\Domain\Billing\Contracts\BillingGateway;
-use App\Enums\PlanCode;
+use App\Models\BillingOutbox;
+use App\Models\PlanPrice;
+use App\Models\PlanSubscription;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Subscriptions\BillingProcessor;
+use App\Services\Subscriptions\BillingReconciler;
+use App\Services\Subscriptions\CatalogService;
+use App\Services\Subscriptions\ContractService;
+use App\Services\Subscriptions\EntitlementService;
+use Carbon\CarbonImmutable;
 use DomainException;
-use RuntimeException;
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Stripe\Exception\ApiErrorException;
+use Stripe\Exception\InvalidRequestException;
+use Stripe\StripeClient;
 
-
-class StripeBillingGateway implements BillingGateway
+final class StripeBillingGateway implements BillingGateway
 {
-    private \Stripe\StripeClient $stripe;
-
-    public function __construct(
-        private readonly SyncStripeSubscriptionService $syncService,
-    ) {
-        $this->stripe = new \Stripe\StripeClient(config('cashier.secret'));
-
-        \Stripe\Stripe::setMaxNetworkRetries(2);
-    }
-
-    private const META_CHANGE_ID =
-    'app_plan_change_id';
-
-    private const META_TARGET_PRICE =
-    'app_target_price';
-
-    private const META_RESUME_AFTER_UPGRADE =
-    'app_resume_after_upgrade';
+    public function __construct(private StripeClient $stripe, private CatalogService $catalog, private ContractService $contracts, private EntitlementService $entitlements, private BillingProcessor $processor, private BillingReconciler $reconciler) {}
 
     public function createCheckout(
         Tenant $tenant,
         User $user,
-        PlanCode $plan,
+        string $plan,
         string $operationId,
+        string $interval = 'month',
+        ?string $offer = null,
+        array $retainedBranches = [],
+        array $retainedMemberships = [],
     ): string {
-        $operationId = trim($operationId);
-
-        if ($operationId === '') {
-            throw new DomainException(
-                'Falta el identificador de la operación.'
-            );
-        }
-
-        if ($plan === PlanCode::Free) {
-            throw new DomainException(
-                'El plan gratuito no requiere un proceso de pago.'
-            );
-        }
-
-        $basePrice = $this->priceFor($plan);
-
-        $frontendUrl = rtrim(
-            (string) config('app.frontend_url'),
-            '/'
+        $price = $this->catalog->price(
+            $plan,
+            $interval,
+            $offer
         );
 
-        $billingUrl = $frontendUrl
-            . '/'
-            . $tenant->slug
-            . '/billing';
+        $this->catalog->assertPurchasable($price);
 
-        $subscription = $tenant->subscription('default');
+        $current = $this->entitlements->current($tenant);
 
-        if ($subscription && ! $subscription->ended()) {
-            return $this->changePlan(
-                tenant: $tenant,
-                subscription: $subscription,
-                newPriceId: $basePrice,
-                targetPlan: $plan,
-                billingUrl: $billingUrl,
+        /*
+     * Cambio entre contratos pagados.
+     */
+        if ($current && $current->price->amount > 0) {
+            $change = $this->contracts->requestPlanChange(
+                subscription: $current,
+                target: $price,
+                branches: $retainedBranches,
+                memberships: $retainedMemberships,
                 operationId: $operationId,
+            );
+
+            $kind = $change->change_mode === 'immediate'
+                ? 'upgrade_plan'
+                : 'schedule_plan';
+
+            $operation = BillingOutbox::query()
+                ->where('kind', $kind)
+                ->where('payload->change_id', $change->id)
+                ->firstOrFail();
+
+            $result = $this->processor->run($operation);
+
+            /*
+         * Si Stripe dejó un invoice pendiente para el upgrade,
+         * enviamos al usuario a pagarlo.
+         */
+            if (
+                $change->change_mode === 'immediate'
+                && ($result['status'] ?? null) === 'awaiting_payment'
+                && filled($result['invoice_url'] ?? null)
+            ) {
+                return $result['invoice_url'];
+            }
+
+            $state = $change->change_mode === 'immediate'
+                ? (($result['status'] ?? null) === 'confirmed'
+                    ? 'applied'
+                    : 'processing')
+                : 'scheduled';
+
+            return rtrim(config('app.frontend_url'), '/')
+                .'/'.$tenant->slug
+                .'/billing?change='.$state;
+        }
+
+        /*
+     * Free no necesita Checkout.
+     */
+        if ($price->amount === 0) {
+            throw new DomainException(
+                'El plan gratuito no requiere checkout.'
             );
         }
 
-        return $this->newSubscriptionCheckout(
-            tenant: $tenant,
-            user: $user,
-            basePrice: $basePrice,
-            billingUrl: $billingUrl,
-            operationId: $operationId,
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $pending = $this->reconciler->pendingContract($tenant);
+
+            if ($pending) {
+                $url = $this->resolvePendingCheckout(
+                    $tenant,
+                    $pending,
+                    $price,
+                );
+
+                if ($url !== null) {
+                    return $url;
+                }
+
+                continue;
+            }
+
+            try {
+                $decision = DB::transaction(function () use (
+                    $tenant,
+                    $price,
+                    $user,
+                    $operationId
+                ): array {
+                    Tenant::query()
+                        ->whereKey($tenant->id)
+                        ->lockForUpdate()
+                        ->firstOrFail();
+
+                    $existing = BillingOutbox::query()
+                        ->where(
+                            'operation_key',
+                            $tenant->id.':checkout:'.$operationId
+                        )
+                        ->first();
+
+                    if ($existing) {
+                        $contract = PlanSubscription::query()
+                            ->findOrFail($existing->payload['contract_id']);
+
+                        if ($contract->plan_price_id !== $price->id) {
+                            throw new DomainException(
+                                'La clave ya corresponde a otra oferta.'
+                            );
+                        }
+
+                        if ($contract->ended_at) {
+                            throw new DomainException(
+                                'La clave corresponde a un intento de pago terminado.'
+                            );
+                        }
+
+                        return [
+                            'action' => 'process',
+                            'operation_id' => $existing->id,
+                        ];
+                    }
+
+                    $pending = PlanSubscription::query()
+                        ->where('pending_tenant_id', $tenant->id)
+                        ->first();
+
+                    if ($pending) {
+                        return [
+                            'action' => 'pending',
+                            'contract_id' => $pending->id,
+                        ];
+                    }
+
+                    $subscription = $this->contracts->create(
+                        $tenant,
+                        $price
+                    );
+                    $operation = $this->contracts->enqueue(
+                        $tenant,
+                        'checkout',
+                        'checkout:'.$operationId,
+                        [
+                            'contract_id' => $subscription->id,
+                            'email' => $user->email,
+                        ]
+                    );
+
+                    return [
+                        'action' => 'process',
+                        'operation_id' => $operation->id,
+                    ];
+                });
+            } catch (QueryException $exception) {
+                if ($this->reconciler->pendingContract($tenant)) {
+                    continue;
+                }
+
+                throw $exception;
+            }
+
+            if ($decision['action'] === 'pending') {
+                $url = $this->resolvePendingCheckout(
+                    $tenant,
+                    PlanSubscription::query()->findOrFail(
+                        $decision['contract_id']
+                    ),
+                    $price,
+                );
+
+                if ($url !== null) {
+                    return $url;
+                }
+
+                continue;
+            }
+
+            $result = $this->processor->run(
+                BillingOutbox::query()->findOrFail(
+                    $decision['operation_id']
+                )
+            );
+            $url = $result['url'] ?? null;
+
+            if (! is_string($url) || $url === '') {
+                throw new DomainException(
+                    'No pudimos preparar la sesión de pago.'
+                );
+            }
+
+            return $url;
+        }
+
+        throw new DomainException(
+            'No pudimos estabilizar el intento de pago. Actualiza el estado e intenta nuevamente.'
+        );
+    }
+
+    private function resolvePendingCheckout(
+        Tenant $tenant,
+        PlanSubscription $pending,
+        PlanPrice $price,
+    ): ?string {
+        $operation = $this->reconciler->checkoutOperation($pending);
+
+        if (! $operation) {
+            $this->reconciler->cancelPendingCheckout($tenant);
+
+            return null;
+        }
+
+        if (! isset($operation->result['session_id'])) {
+            if ($pending->plan_price_id !== $price->id) {
+                $this->reconciler->cancelPendingCheckout($tenant);
+
+                return null;
+            }
+
+            $result = $this->processor->run($operation);
+            $url = $result['url'] ?? null;
+
+            if (! is_string($url) || $url === '') {
+                throw new DomainException(
+                    'El intento de pago requiere reconciliación.'
+                );
+            }
+
+            return $url;
+        }
+
+        $session = $this->reconciler->checkout($operation);
+        $pending->refresh();
+        $operation->refresh();
+
+        if ($pending->ended_at || $session->status === 'expired') {
+            return null;
+        }
+
+        if (
+            $session->status === 'open'
+            && $session->payment_status === 'unpaid'
+        ) {
+            if ($pending->plan_price_id !== $price->id) {
+                $this->reconciler->cancelPendingCheckout($tenant);
+
+                return null;
+            }
+
+            $url = $operation->result['url'] ?? null;
+
+            if (! is_string($url) || $url === '') {
+                throw new DomainException(
+                    'No pudimos recuperar la sesión de pago pendiente.'
+                );
+            }
+
+            return $url;
+        }
+
+        $this->reconciler->run($tenant);
+
+        if ($this->entitlements->current($tenant)?->price->amount > 0) {
+            return rtrim(config('app.frontend_url'), '/')
+                .'/'.$tenant->slug
+                .'/billing?checkout=success';
+        }
+
+        throw new DomainException(
+            'El pago se está confirmando. Actualiza el estado antes de crear otro intento.'
         );
     }
 
     public function createPortal(Tenant $tenant): string
     {
-        if (! $tenant->hasStripeId()) {
+        if (! $tenant->stripe_id) {
             throw new DomainException('El negocio todavía no tiene una cuenta de cobro.');
         }
+        $configuration = config('billing.portal_configuration');
+        if (! $configuration) {
+            throw new DomainException('Falta configurar el portal de pagos.');
+        }
+        $portal = $this->stripe->billingPortal->configurations->retrieve($configuration);
+        if (data_get($portal, 'features.subscription_update.enabled') || data_get($portal, 'features.subscription_cancel.enabled')) {
+            throw new DomainException('El portal no puede modificar contratos fuera del sistema comercial.');
+        }
 
-        $returnUrl = rtrim((string) config('app.frontend_url'), '/')
-            . '/' . $tenant->slug . '/billing';
-
-        return $tenant->billingPortalUrl($returnUrl);
+        return $this->stripe->billingPortal->sessions->create(['customer' => $tenant->stripe_id, 'configuration' => $configuration, 'return_url' => rtrim(config('app.frontend_url'), '/').'/'.$tenant->slug.'/billing'])->url;
     }
 
-    public function cancelSubscription(Tenant $tenant): void
+    public function cancelSubscription(Tenant $tenant, array $retainedBranches = [], array $retainedMemberships = []): void
     {
-        $subscription = $tenant->subscription('default');
-
-        if (! $subscription || $subscription->ended()) {
-            throw new DomainException('No hay una suscripción activa para cancelar.');
-        }
-
-        $stripeSubscription = $subscription->asStripeSubscription();
-
-        if ($stripeSubscription->status !== 'active' && $stripeSubscription->status !== 'trialing') {
-            throw new DomainException('La suscripción no está en un estado que permita cancelación.');
-        }
-
-        if ($stripeSubscription->cancel_at_period_end) {
-            throw new DomainException('La suscripción ya está programada para cancelarse.');
-        }
-
-        $this->stripe->subscriptions->update($stripeSubscription->id, [
-            'cancel_at_period_end' => true,
-        ]);
+        $this->setCancellation($tenant, true, $retainedBranches, $retainedMemberships);
     }
 
     public function reactivateSubscription(Tenant $tenant): void
     {
-        $subscription = $tenant->subscription('default');
-
-        if (! $subscription || $subscription->ended()) {
-            throw new DomainException('No hay una suscripción para reactivar.');
-        }
-
-        $stripeSubscription = $subscription->asStripeSubscription();
-
-        if (! $stripeSubscription->cancel_at_period_end) {
-            throw new DomainException('La suscripción no está programada para cancelarse.');
-        }
-
-        $this->stripe->subscriptions->update($stripeSubscription->id, [
-            'cancel_at_period_end' => false,
-        ]);
+        $this->setCancellation($tenant, false);
     }
 
-    /**
-     * Maneja el cambio de plan para suscripciones existentes.
-     *
-     * Ambos upgrades y downgrades son inmediatos con prorrateo.
-     * Stripe calcula el cargo o crédito proporcional automáticamente.
-     */
-    private function changePlan(
-        Tenant $tenant,
-        mixed $subscription,
-        string $newPriceId,
-        PlanCode $targetPlan,
-        string $billingUrl,
-        string $operationId,
-    ): string {
-        $currentPlan = $this->resolveCurrentPlan($subscription);
+    private function setCancellation(Tenant $tenant, bool $cancel, array $retainedBranches = [], array $retainedMemberships = []): void
+    {
+        $kind = $cancel ? 'cancel' : 'reactivate';
+        $opId = DB::transaction(function () use (
+            $tenant,
+            $cancel,
+            $retainedBranches,
+            $retainedMemberships,
+            $kind,
+        ): ?int {
+            Tenant::query()
+                ->whereKey($tenant->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        if ($currentPlan === null) {
-            throw new DomainException('No pudimos identificar el plan actual en Stripe.');
-        }
+            $s = $this->entitlements->current($tenant);
 
-        // Ya tiene este plan
-        if ($currentPlan === $newPriceId) {
-            throw new DomainException('El negocio ya cuenta con este plan.');
-        }
+            if (! $s || ! $s->price->amount) {
+                throw new DomainException('No hay una suscripción pagada vigente.');
+            }
 
-        // Determinar si es upgrade o downgrade por nivel, no por precio
-        $currentPlanCode = $this->resolveCurrentPlanCode($subscription);
-        $isUpgrade = $currentPlanCode !== null && $targetPlan->level() > $currentPlanCode->level();
+            if ($s->cancel_at_period_end === $cancel) {
+                return null;
+            }
 
-        if ($isUpgrade) {
-            return $this->upgradePlanImmediately(
-                tenant: $tenant,
-                subscription: $subscription,
-                newPriceId: $newPriceId,
-                billingUrl: $billingUrl,
-                operationId: $operationId,
+            $this->contracts->assertNoPendingChange(
+                $s,
+                $cancel ? 'cancel' : 'reactivate',
             );
-        }
 
-        return $this->downgradePlanImmediately(
-            tenant: $tenant,
-            subscription: $subscription,
-            newPriceId: $newPriceId,
-            billingUrl: $billingUrl,
-            operationId: $operationId,
-        );
-    }
-
-    /**
-     * Upgrade inmediato: cambia el precio y cobra la diferencia inmediatamente.
-     * Si el pago falla, el cambio queda pendiente hasta que se complete.
-     */
-
-    private function retrieveStripeSubscription(
-        string $stripeSubscriptionId,
-    ): \Stripe\Subscription {
-        try {
-            return $this->stripe
-                ->subscriptions
-                ->retrieve(
-                    $stripeSubscriptionId,
-                    [
-                        'expand' => [
-                            'latest_invoice',
-                        ],
-                    ],
+            if ($cancel) {
+                $this->contracts->validateBranches(
+                    $tenant,
+                    $this->entitlements->forVersion(
+                        $this->catalog->price('free')->version
+                    )['included_branches'],
+                    $retainedBranches
                 );
-        } catch (
-            \Stripe\Exception\ApiErrorException $exception
-        ) {
-            Log::error(
-                'No fue posible consultar la suscripción en Stripe.',
-                [
-                    'stripe_subscription_id' =>
-                    $stripeSubscriptionId,
-
-                    'message' =>
-                    $exception->getMessage(),
-
-                    'stripe_code' =>
-                    $exception->getStripeCode(),
-                ],
-            );
-
-            throw new DomainException(
-                'No pudimos consultar tu suscripción. Intenta de nuevo.'
-            );
-        }
-    }
-
-    private function assertPendingUpdatesAreSupported(
-        \Stripe\Subscription $subscription,
-    ): void {
-        if (
-            $subscription->collection_method
-            !== 'charge_automatically'
-        ) {
-            throw new DomainException(
-                'Esta suscripción no permite mejoras automáticas. Revisa tu método de facturación.'
-            );
-        }
-    }
-
-    private function findBasePlanItem(
-        \Stripe\Subscription $subscription,
-    ): ?object {
-        $basePriceIds = array_values(
-            array_filter([
-                $this->priceFor(
-                    PlanCode::Business
-                ),
-                $this->priceFor(
-                    PlanCode::Restaurant
-                ),
-            ])
-        );
-
-        foreach (
-            data_get(
-                $subscription,
-                'items.data',
-                []
-            ) as $item
-        ) {
-            $priceId = data_get(
-                $item,
-                'price.id'
-            );
-
-            if (
-                is_string($priceId)
-                && in_array(
-                    $priceId,
-                    $basePriceIds,
-                    true
-                )
-            ) {
-                return $item;
-            }
-        }
-
-        return null;
-    }
-
-    private function subscriptionContainsPrice(
-        \Stripe\Subscription $subscription,
-        string $expectedPriceId,
-    ): bool {
-        foreach (
-            data_get(
-                $subscription,
-                'items.data',
-                []
-            ) as $item
-        ) {
-            if (
-                data_get($item, 'price.id')
-                === $expectedPriceId
-            ) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function reactivateRenewalIfNeeded(
-        Tenant $tenant,
-        \Stripe\Subscription $subscription,
-        string $operationId,
-    ): \Stripe\Subscription {
-        if (
-            ! (bool) (
-                $subscription
-                ->cancel_at_period_end
-                ?? false
-            )
-        ) {
-            return $subscription;
-        }
-
-        if ($subscription->status === 'canceled') {
-            throw new DomainException(
-                'La suscripción ya terminó y no puede reactivarse.'
-            );
-        }
-
-        try {
-            return $this->stripe
-                ->subscriptions
-                ->update(
-                    $subscription->id,
-                    [
-                        /*
-                     * Esta petición está separada del upgrade.
-                     * No lleva pending_if_incomplete.
-                     */
-                        'cancel_at_period_end' =>
-                        false,
-
-                        'metadata' => [
-                            self::META_RESUME_AFTER_UPGRADE =>
-                            '0',
-
-                            'app_last_plan_change_id' =>
-                            $operationId,
-                        ],
-                    ],
-                    [
-                        'idempotency_key' =>
-                        $this->stripeIdempotencyKey(
-                            action: 'resume-after-upgrade',
-
-                            tenantId: (string) $tenant->id,
-
-                            subscriptionId: $subscription->id,
-
-                            operationId: $operationId,
-                        ),
-                    ],
+                $this->contracts->validateMemberships(
+                    $tenant,
+                    $this->entitlements->forVersion($this->catalog->price('free')->version)['max_users'] ?? 0,
+                    $retainedMemberships,
                 );
-        } catch (
-            \Stripe\Exception\ApiErrorException $exception
-        ) {
-            Log::error(
-                'No se pudo reactivar la renovación después del upgrade.',
-                [
-                    'tenant_id' =>
-                    $tenant->id,
-
-                    'stripe_subscription_id' =>
-                    $subscription->id,
-
-                    'operation_id' =>
-                    $operationId,
-
-                    'message' =>
-                    $exception->getMessage(),
-
-                    'stripe_code' =>
-                    $exception->getStripeCode(),
-                ],
-            );
-
-            throw new DomainException(
-                'El plan fue actualizado, pero la renovación continúa programada para cancelarse.'
-            );
-        }
-    }
-
-    private function resolvePendingInvoiceUrl(
-        \Stripe\Subscription $subscription,
-    ): string {
-        $latestInvoice =
-            $subscription->latest_invoice
-            ?? null;
-
-        if (is_object($latestInvoice)) {
-            $invoiceUrl =
-                $latestInvoice
-                ->hosted_invoice_url
-                ?? null;
-
-            if (
-                is_string($invoiceUrl)
-                && $invoiceUrl !== ''
-            ) {
-                return $invoiceUrl;
             }
 
-            $latestInvoice =
-                $latestInvoice->id
-                ?? null;
-        }
+            $activeKinds = ['pending', 'processing', 'reconciliation_required'];
+            $opposite = BillingOutbox::query()
+                ->whereIn('kind', ['cancel', 'reactivate'])
+                ->where('kind', '!=', $kind)
+                ->where('payload->contract_id', $s->id)
+                ->whereIn('status', $activeKinds)
+                ->lockForUpdate()
+                ->exists();
 
-        if (
-            is_string($latestInvoice)
-            && $latestInvoice !== ''
-        ) {
-            try {
-                $invoice = $this->stripe
-                    ->invoices
-                    ->retrieve(
-                        $latestInvoice,
-                        [],
-                    );
+            if ($opposite) {
+                throw new DomainException(
+                    'Hay una operación contractual contraria en proceso. Actualiza su estado antes de continuar.'
+                );
+            }
 
-                $invoiceUrl =
-                    $invoice
-                    ->hosted_invoice_url
-                    ?? null;
+            $payload = [
+                'contract_id' => $s->id,
+                'retained_branch_ids' => $retainedBranches,
+                'retained_membership_ids' => $retainedMemberships,
+            ];
+            $operation = BillingOutbox::query()
+                ->where('kind', $kind)
+                ->where('payload->contract_id', $s->id)
+                ->whereIn('status', $activeKinds)
+                ->lockForUpdate()
+                ->latest('id')
+                ->first();
 
+            if ($operation) {
                 if (
-                    is_string($invoiceUrl)
-                    && $invoiceUrl !== ''
+                    $operation->payload !== $payload
+                    && ($operation->attempts > 0 || $operation->status !== 'pending')
                 ) {
-                    return $invoiceUrl;
+                    throw new DomainException(
+                        'La operación ya fue enviada a Stripe. Reconcilia su estado antes de cambiar la selección.'
+                    );
                 }
-            } catch (
-                \Stripe\Exception\ApiErrorException $exception
-            ) {
-                Log::warning(
-                    'No fue posible recuperar la factura del cambio pendiente.',
-                    [
-                        'stripe_subscription_id' =>
-                        $subscription->id,
 
-                        'stripe_invoice_id' =>
-                        $latestInvoice,
+                if ($operation->payload !== $payload) {
+                    $operation->update(['payload' => $payload]);
+                }
 
-                        'message' =>
-                        $exception->getMessage(),
-                    ],
-                );
+                return $operation->id;
             }
-        }
 
-        throw new DomainException(
-            'El cambio de plan requiere completar un pago. Revisa tus facturas o método de pago.'
-        );
-    }
-
-    private function stripeIdempotencyKey(
-        string $action,
-        string $tenantId,
-        string $subscriptionId,
-        string $operationId,
-    ): string {
-        $payload = implode('|', [
-            $action,
-            $tenantId,
-            $subscriptionId,
-            $operationId,
-        ]);
-
-        return 'billing:'
-            . $action
-            . ':'
-            . hash('sha256', $payload);
-    }
-
-    public function finalizeSubscriptionChangeFromWebhook(
-        Tenant $tenant,
-        \Stripe\Subscription $subscription,
-    ): void {
-        /*
-     * Todavía existe un pago pendiente.
-     * No reactivamos ni provisionamos el plan nuevo.
-     */
-        if ($subscription->pending_update !== null) {
-            $this->syncService->sync(
+            return $this->contracts->enqueue(
                 $tenant,
-                $subscription,
-            );
+                $kind,
+                $kind.':'.$s->public_id.':'.Str::uuid(),
+                $payload,
+            )->id;
+        });
 
+        if ($opId === null) {
             return;
         }
 
-        $shouldResume = data_get(
-            $subscription,
-            'metadata.'
-                . self::META_RESUME_AFTER_UPGRADE
-        ) === '1';
-
-        $operationId = data_get(
-            $subscription,
-            'metadata.'
-                . self::META_CHANGE_ID
+        $this->processor->run(
+            BillingOutbox::query()->findOrFail($opId)
         );
-
-        if (
-            $shouldResume
-            && (bool) (
-                $subscription
-                ->cancel_at_period_end
-                ?? false
-            )
-        ) {
-            $subscription =
-                $this->reactivateRenewalIfNeeded(
-                    tenant: $tenant,
-                    subscription: $subscription,
-                    operationId: is_string($operationId)
-                        && $operationId !== ''
-                        ? $operationId
-                        : $subscription->id,
-                );
-        }
-
-        $this->syncService->sync(
-            $tenant,
-            $subscription,
-        );
-    }
-
-    private function upgradePlanImmediately(
-        Tenant $tenant,
-        mixed $subscription,
-        string $newPriceId,
-        string $billingUrl,
-        string $operationId,
-    ): string {
-        $stripeSubscription =
-            $this->retrieveStripeSubscription(
-                $subscription->stripe_id
-            );
-
-        $this->assertPendingUpdatesAreSupported(
-            $stripeSubscription
-        );
-
-        if ($stripeSubscription->pending_update !== null) {
-            return $this->resolvePendingInvoiceUrl(
-                $stripeSubscription
-            );
-        }
-
-        $baseItem = $this->findBasePlanItem(
-            $stripeSubscription
-        );
-
-        if (! $baseItem) {
-            throw new DomainException(
-                'No pudimos identificar el plan actual en Stripe.'
-            );
-        }
-
-        $currentPriceId = data_get(
-            $baseItem,
-            'price.id'
-        );
-
-        /*
-     * La operación ya se aplicó previamente.
-     */
-        if ($currentPriceId === $newPriceId) {
-            $finalSubscription =
-                $this->reactivateRenewalIfNeeded(
-                    tenant: $tenant,
-                    subscription: $stripeSubscription,
-                    operationId: $operationId,
-                );
-
-            $this->syncService->sync(
-                $tenant,
-                $finalSubscription,
-            );
-
-            return $billingUrl
-                . '?checkout=success';
-        }
-
-        /*
-     * Stripe NO permite crear un pending_update (payment_behavior=pending_if_incomplete)
-     * en una suscripción que tiene cancel_at_period_end = true.
-     *
-     * Primero: quitamos la cancelación programada en una llamada SEPARADA
-     * (sin pending_if_incomplete), para que Stripe lo permita.
-     *
-     * Ref: https://stripe.com/docs/billing/subscriptions/pending-updates-reference#supported-attributes
-     */
-        $hadCancelAtPeriodEnd = (bool) (
-            $stripeSubscription
-            ->cancel_at_period_end
-            ?? false
-        );
-
-        if ($hadCancelAtPeriodEnd) {
-            try {
-                $stripeSubscription =
-                    $this->stripe
-                    ->subscriptions
-                    ->update(
-                        $stripeSubscription->id,
-                        [
-                            'cancel_at_period_end' => false,
-                        ],
-                        [
-                            'idempotency_key' =>
-                            $this->stripeIdempotencyKey(
-                                action: 'remove-cancel-before-upgrade',
-                                tenantId: (string) $tenant->id,
-                                subscriptionId: $stripeSubscription->id,
-                                operationId: $operationId,
-                            ),
-                        ],
-                    );
-            } catch (
-                \Stripe\Exception\ApiErrorException $exception
-            ) {
-                Log::error(
-                    'No se pudo remover cancel_at_period_end antes del upgrade.',
-                    [
-                        'tenant_id' => $tenant->id,
-                        'stripe_subscription_id' =>
-                        $stripeSubscription->id,
-                        'operation_id' =>
-                        $operationId,
-                        'message' =>
-                        $exception->getMessage(),
-                        'stripe_code' =>
-                        $exception->getStripeCode(),
-                    ],
-                );
-
-                throw new DomainException(
-                    'No pudimos preparar la suscripción para la mejora de plan. Intenta de nuevo.'
-                );
-            }
-        }
-
-        try {
-            $updatedSubscription =
-                $this->stripe
-                ->subscriptions
-                ->update(
-                    $stripeSubscription->id,
-                    [
-                        'items' => [[
-                            'id' => $baseItem->id,
-                            'price' => $newPriceId,
-                        ]],
-
-                        'proration_behavior' =>
-                        'always_invoice',
-
-                        'payment_behavior' =>
-                        'pending_if_incomplete',
-
-                        'metadata' => [
-                            self::META_CHANGE_ID =>
-                            $operationId,
-
-                            self::META_TARGET_PRICE =>
-                            $newPriceId,
-
-                            self::META_RESUME_AFTER_UPGRADE =>
-                            $hadCancelAtPeriodEnd
-                                ? '1'
-                                : '0',
-                        ],
-
-                        'expand' => [
-                            'latest_invoice',
-                        ],
-                    ],
-                    [
-                        'idempotency_key' =>
-                        $this->stripeIdempotencyKey(
-                            action: 'upgrade',
-                            tenantId: (string) $tenant->id,
-                            subscriptionId: $stripeSubscription->id,
-                            operationId: $operationId,
-                        ),
-                    ],
-                );
-        } catch (
-            \Stripe\Exception\ApiErrorException $exception
-        ) {
-            Log::error(
-                'Error al hacer upgrade de plan',
-                [
-                    'tenant_id' => $tenant->id,
-
-                    'stripe_subscription_id' =>
-                    $stripeSubscription->id,
-
-                    'current_price_id' =>
-                    $currentPriceId,
-
-                    'new_price_id' =>
-                    $newPriceId,
-
-                    'operation_id' =>
-                    $operationId,
-
-                    'message' =>
-                    $exception->getMessage(),
-
-                    'stripe_code' =>
-                    $exception->getStripeCode(),
-                ],
-            );
-
-            throw new DomainException(
-                'No pudimos procesar la mejora de plan. Intenta de nuevo.'
-            );
-        }
-
-        /*
-     * La factura no se completó.
-     *
-     * Stripe mantiene el precio anterior y almacena el nuevo
-     * precio dentro de pending_update.
-     */
-        if ($updatedSubscription->pending_update !== null) {
-            return $this->resolvePendingInvoiceUrl(
-                $updatedSubscription
-            );
-        }
-
-        /*
-     * Comprobación defensiva:
-     * la respuesta debe contener ya el nuevo precio.
-     */
-        if (
-            ! $this->subscriptionContainsPrice(
-                $updatedSubscription,
-                $newPriceId,
-            )
-        ) {
-            Log::critical(
-                'Stripe respondió sin pending_update pero el precio esperado no está aplicado.',
-                [
-                    'tenant_id' => $tenant->id,
-
-                    'stripe_subscription_id' =>
-                    $updatedSubscription->id,
-
-                    'expected_price_id' =>
-                    $newPriceId,
-
-                    'operation_id' =>
-                    $operationId,
-                ],
-            );
-
-            throw new DomainException(
-                'Stripe procesó la operación, pero no pudimos confirmar el nuevo plan.'
-            );
-        }
-
-        /*
-     * El pago ya terminó y el plan fue aplicado.
-     *
-     * Si previamente habíamos quitado cancel_at_period_end, ya no
-     * necesitamos reactivar nada. Si no tenía cancelación previa,
-     * reactivateRenewalIfNeeded es un no-op.
-     */
-        try {
-            $finalSubscription =
-                $this->reactivateRenewalIfNeeded(
-                    tenant: $tenant,
-                    subscription: $updatedSubscription,
-                    operationId: $operationId,
-                );
-        } catch (DomainException $exception) {
-            Log::warning(
-                'El upgrade fue aplicado, pero la reactivación quedó pendiente.',
-                [
-                    'tenant_id' => $tenant->id,
-
-                    'stripe_subscription_id' =>
-                    $updatedSubscription->id,
-
-                    'operation_id' =>
-                    $operationId,
-
-                    'message' =>
-                    $exception->getMessage(),
-                ],
-            );
-
-            $this->syncService->sync(
-                $tenant,
-                $updatedSubscription,
-            );
-
-            return $billingUrl
-                . '?checkout=success'
-                . '&renewal=pending';
-        }
-
-        $this->syncService->sync(
-            $tenant,
-            $finalSubscription,
-        );
-
-        return $billingUrl
-            . '?checkout=success';
-    }
-
-    /**
-     * Downgrade inmediato: cambia el precio y genera crédito prorrateado.
-     * No intenta cobrar inmediatamente; el crédito se aplica a la próxima factura.
-     */
-    private function downgradePlanImmediately(
-        Tenant $tenant,
-        mixed $subscription,
-        string $newPriceId,
-        string $billingUrl,
-        string $operationId,
-    ): string {
-        $stripeSubscription = $this->retrieveStripeSubscription(
-            $subscription->stripe_id
-        );
-
-        $baseItem = $this->findBasePlanItem(
-            $stripeSubscription
-        );
-
-        if (! $baseItem) {
-            throw new DomainException(
-                'No pudimos identificar el plan actual en Stripe.'
-            );
-        }
-
-        $currentPriceId = data_get(
-            $baseItem,
-            'price.id'
-        );
-
-        /*
-     * El downgrade ya fue aplicado.
-     *
-     * Aun así, comprobamos que la renovación quede activa,
-     * por si la función fue ejecutada nuevamente.
-     */
-        if ($currentPriceId === $newPriceId) {
-            $finalSubscription = $stripeSubscription;
-
-            if (
-                (bool) (
-                    $stripeSubscription->cancel_at_period_end
-                    ?? false
-                )
-            ) {
-                try {
-                    $finalSubscription = $this->stripe
-                        ->subscriptions
-                        ->update(
-                            $stripeSubscription->id,
-                            [
-                                'cancel_at_period_end' => false,
-                            ],
-                            [
-                                'idempotency_key' =>
-                                $this->stripeIdempotencyKey(
-                                    action: 'reactivate-after-downgrade',
-                                    tenantId: (string) $tenant->id,
-                                    subscriptionId: $stripeSubscription->id,
-                                    operationId: $operationId,
-                                ),
-                            ],
-                        );
-                } catch (
-                    \Stripe\Exception\ApiErrorException $exception
-                ) {
-                    Log::error(
-                        'No se pudo quitar la cancelación programada del downgrade.',
-                        [
-                            'tenant_id' => $tenant->id,
-
-                            'stripe_subscription_id' =>
-                            $stripeSubscription->id,
-
-                            'operation_id' =>
-                            $operationId,
-
-                            'message' =>
-                            $exception->getMessage(),
-
-                            'stripe_code' =>
-                            $exception->getStripeCode(),
-                        ],
-                    );
-
-                    throw new DomainException(
-                        'El plan ya fue actualizado, pero no pudimos reactivar su renovación.'
-                    );
-                }
-            }
-
-            $this->syncService->sync(
-                $tenant,
-                $finalSubscription,
-            );
-
-            return $billingUrl
-                . '?checkout=success';
-        }
-
-        try {
-            $updatedSubscription = $this->stripe
-                ->subscriptions
-                ->update(
-                    $stripeSubscription->id,
-                    [
-                        'items' => [[
-                            'id' => $baseItem->id,
-                            'price' => $newPriceId,
-                        ]],
-
-                        /*
-                     * Cambiar el plan también reactiva la renovación.
-                     */
-                        'cancel_at_period_end' => false,
-
-                        /*
-                     * Stripe genera el crédito del downgrade,
-                     * pero no crea una factura inmediatamente.
-                     */
-                        'proration_behavior' =>
-                        'create_prorations',
-
-                        'metadata' => [
-                            self::META_CHANGE_ID =>
-                            $operationId,
-
-                            self::META_TARGET_PRICE =>
-                            $newPriceId,
-                        ],
-                    ],
-                    [
-                        'idempotency_key' =>
-                        $this->stripeIdempotencyKey(
-                            action: 'downgrade',
-                            tenantId: (string) $tenant->id,
-                            subscriptionId: $stripeSubscription->id,
-                            operationId: $operationId,
-                        ),
-                    ],
-                );
-        } catch (
-            \Stripe\Exception\ApiErrorException $exception
-        ) {
-            Log::error(
-                'Error al hacer downgrade de plan',
-                [
-                    'tenant_id' => $tenant->id,
-
-                    'stripe_subscription_id' =>
-                    $stripeSubscription->id,
-
-                    'current_price_id' =>
-                    $currentPriceId,
-
-                    'new_price_id' =>
-                    $newPriceId,
-
-                    'operation_id' =>
-                    $operationId,
-
-                    'cancel_at_period_end' =>
-                    $stripeSubscription->cancel_at_period_end
-                        ?? null,
-
-                    'message' =>
-                    $exception->getMessage(),
-
-                    'stripe_code' =>
-                    $exception->getStripeCode(),
-                ],
-            );
-
-            throw new DomainException(
-                'No pudimos procesar el cambio de plan. Intenta de nuevo.'
-            );
-        }
-
-        /*
-     * Comprobación defensiva:
-     * confirmar que Stripe aplicó el nuevo precio.
-     */
-        if (
-            ! $this->subscriptionContainsPrice(
-                $updatedSubscription,
-                $newPriceId,
-            )
-        ) {
-            Log::critical(
-                'Stripe procesó el downgrade, pero el precio esperado no está aplicado.',
-                [
-                    'tenant_id' => $tenant->id,
-
-                    'stripe_subscription_id' =>
-                    $updatedSubscription->id,
-
-                    'expected_price_id' =>
-                    $newPriceId,
-
-                    'operation_id' =>
-                    $operationId,
-                ],
-            );
-
-            throw new DomainException(
-                'Stripe procesó la operación, pero no pudimos confirmar el nuevo plan.'
-            );
-        }
-
-        $this->syncService->sync(
-            $tenant,
-            $updatedSubscription,
-        );
-
-        return $billingUrl
-            . '?checkout=success';
-    }
-
-    /**
-     * Crea un checkout para una nueva suscripción.
-     */
-    private function newSubscriptionCheckout(
-        Tenant $tenant,
-        User $user,
-        string $basePrice,
-        string $billingUrl,
-        string $operationId,
-    ): string {
-        $stampPrice = $this->configuredValue('billing.extras.stamp_price');
-
-        $cacheKey = "checkout_lock_{$tenant->id}";
-
-        if (Cache::has($cacheKey)) {
-            throw new DomainException('Ya hay un checkout en proceso, espera un momento e intenta de nuevo.');
-        }
-
-        Cache::put($cacheKey, true, now()->addSeconds(10));
-
-        try {
-            $checkout = $tenant
-                ->newSubscription('default', $basePrice)
-                ->meteredPrice($stampPrice)
-                ->withMetadata([
-                    'tenant_public_id' => $tenant->public_id,
-                    'plan' => 'new',
-                ])
-                ->checkout([
-                    'success_url' => $billingUrl . '?checkout=success',
-                    'cancel_url' => $billingUrl . '?checkout=cancelled',
-                    'billing_address_collection' => 'required',
-                    'tax_id_collection' => ['enabled' => true],
-                    'customer_update' => [
-                        'address' => 'auto',
-                        'name' => 'auto',
-                    ],
-                ], [
-                    'email' => $user->email,
-                    'name' => $tenant->name,
-                    'metadata' => [
-                        'tenant_public_id' => $tenant->public_id,
-                    ],
-                ]);
-        } finally {
-            Cache::forget($cacheKey);
-        }
-
-        return (string) $checkout->url;
-    }
-
-    /**
-     * Resuelve el price ID del plan actual desde Stripe.
-     */
-    private function resolveCurrentPlan(mixed $subscription): ?string
-    {
-        $currentBasePrices = [
-            $this->priceFor(PlanCode::Business),
-            $this->priceFor(PlanCode::Restaurant),
-        ];
-
-        $baseItem = $subscription->items()
-            ->whereIn('stripe_price', $currentBasePrices)
-            ->first();
-
-        return $baseItem?->stripe_price;
-    }
-
-    /**
-     * Resuelve el PlanCode del plan actual desde el price ID.
-     */
-    private function resolveCurrentPlanCode(mixed $subscription): ?PlanCode
-    {
-        $priceId = $this->resolveCurrentPlan($subscription);
-
-        if ($priceId === null) {
-            return null;
-        }
-
-        foreach ([PlanCode::Business, PlanCode::Restaurant] as $plan) {
-            if ($this->priceFor($plan) === $priceId) {
-                return $plan;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Obtiene el monto de un price ID desde la API de Stripe (con caché en memoria).
-     */
-    private function getPriceAmount(string $priceId): int
-    {
-        static $cache = [];
-
-        if (! isset($cache[$priceId])) {
-            $price = $this->stripe->prices->retrieve($priceId);
-            $cache[$priceId] = (int) ($price->unit_amount ?? 0);
-        }
-
-        return $cache[$priceId];
-    }
-
-    private function priceFor(PlanCode $plan): string
-    {
-        if ($plan === PlanCode::Free) {
-            throw new DomainException('El plan gratuito no requiere Stripe.');
-        }
-
-        return $this->configuredValue('billing.plans.' . $plan->value . '.price');
-    }
-
-    private function configuredValue(string $key): string
-    {
-        $value = config($key);
-
-        if (! is_string($value) || $value === '') {
-            throw new RuntimeException("Falta configurar {$key}.");
-        }
-
-        return $value;
     }
 
     public function listInvoices(
@@ -1236,28 +515,22 @@ class StripeBillingGateway implements BillingGateway
                 ->invoices
                 ->all($parameters);
         } catch (
-            \Stripe\Exception\InvalidRequestException $exception
+            InvalidRequestException $exception
         ) {
             Log::warning(
                 'Cursor inválido al consultar facturas de Stripe.',
                 [
-                    'tenant_id' =>
-                    $tenant->getKey(),
+                    'tenant_id' => $tenant->getKey(),
 
-                    'stripe_customer_id' =>
-                    $customerId,
+                    'stripe_customer_id' => $customerId,
 
-                    'cursor' =>
-                    $startingAfter,
+                    'cursor' => $startingAfter,
 
-                    'limit' =>
-                    $limit,
+                    'limit' => $limit,
 
-                    'message' =>
-                    $exception->getMessage(),
+                    'message' => $exception->getMessage(),
 
-                    'stripe_code' =>
-                    $exception->getStripeCode(),
+                    'stripe_code' => $exception->getStripeCode(),
                 ],
             );
 
@@ -1265,28 +538,22 @@ class StripeBillingGateway implements BillingGateway
                 'El cursor de facturación no es válido.'
             );
         } catch (
-            \Stripe\Exception\ApiErrorException $exception
+            ApiErrorException $exception
         ) {
             Log::error(
                 'No se pudieron consultar las facturas de Stripe.',
                 [
-                    'tenant_id' =>
-                    $tenant->getKey(),
+                    'tenant_id' => $tenant->getKey(),
 
-                    'stripe_customer_id' =>
-                    $customerId,
+                    'stripe_customer_id' => $customerId,
 
-                    'cursor' =>
-                    $startingAfter,
+                    'cursor' => $startingAfter,
 
-                    'limit' =>
-                    $limit,
+                    'limit' => $limit,
 
-                    'message' =>
-                    $exception->getMessage(),
+                    'message' => $exception->getMessage(),
 
-                    'stripe_code' =>
-                    $exception->getStripeCode(),
+                    'stripe_code' => $exception->getStripeCode(),
                 ],
             );
 
@@ -1296,8 +563,7 @@ class StripeBillingGateway implements BillingGateway
         }
 
         $mappedInvoices = array_map(
-            fn(mixed $invoice): array =>
-            $this->mapInvoice($invoice),
+            fn (mixed $invoice): array => $this->mapInvoice($invoice),
             $stripeInvoices->data,
         );
 
@@ -1348,25 +614,20 @@ class StripeBillingGateway implements BillingGateway
                     []
                 );
         } catch (
-            \Stripe\Exception\ApiErrorException $exception
+            ApiErrorException $exception
         ) {
             Log::warning(
                 'Se intentó usar un cursor de factura inválido.',
                 [
-                    'tenant_id' =>
-                    $tenantId,
+                    'tenant_id' => $tenantId,
 
-                    'stripe_customer_id' =>
-                    $customerId,
+                    'stripe_customer_id' => $customerId,
 
-                    'cursor' =>
-                    $invoiceId,
+                    'cursor' => $invoiceId,
 
-                    'message' =>
-                    $exception->getMessage(),
+                    'message' => $exception->getMessage(),
 
-                    'stripe_code' =>
-                    $exception->getStripeCode(),
+                    'stripe_code' => $exception->getStripeCode(),
                 ],
             );
 
@@ -1397,14 +658,11 @@ class StripeBillingGateway implements BillingGateway
             Log::warning(
                 'Se intentó usar una factura de otro customer como cursor.',
                 [
-                    'tenant_id' =>
-                    $tenantId,
+                    'tenant_id' => $tenantId,
 
-                    'stripe_customer_id' =>
-                    $customerId,
+                    'stripe_customer_id' => $customerId,
 
-                    'cursor' =>
-                    $invoiceId,
+                    'cursor' => $invoiceId,
                 ],
             );
 
@@ -1445,38 +703,32 @@ class StripeBillingGateway implements BillingGateway
         return [
             'id' => (string) $invoice->id,
 
-            'number' =>
-            $invoice->number
+            'number' => $invoice->number
                 ?? null,
 
             'date' => isset($invoice->created)
-                ? \Carbon\CarbonImmutable::createFromTimestamp(
+                ? CarbonImmutable::createFromTimestamp(
                     (int) $invoice->created
                 )->toIso8601String()
                 : null,
 
-            'plan_name' =>
-            $this->resolveInvoicePlanName(
+            'plan_name' => $this->resolveInvoicePlanName(
                 $invoice
             ),
 
-            'total' =>
-            $this->fromStripeAmount(
+            'total' => $this->fromStripeAmount(
                 $totalInCents
             ),
 
-            'amount_due' =>
-            $this->fromStripeAmount(
+            'amount_due' => $this->fromStripeAmount(
                 $amountDueInCents
             ),
 
-            'amount_paid' =>
-            $this->fromStripeAmount(
+            'amount_paid' => $this->fromStripeAmount(
                 $amountPaidInCents
             ),
 
-            'amount_remaining' =>
-            $this->fromStripeAmount(
+            'amount_remaining' => $this->fromStripeAmount(
                 $amountRemainingInCents
             ),
 
@@ -1495,24 +747,20 @@ class StripeBillingGateway implements BillingGateway
             /*
          * Estado amigable para el frontend.
          */
-            'status_label' =>
-            $this->invoiceStatusLabel(
+            'status_label' => $this->invoiceStatusLabel(
                 status: $status,
                 totalInCents: $totalInCents,
                 amountDueInCents: $amountDueInCents,
                 amountPaidInCents: $amountPaidInCents,
             ),
 
-            'billing_reason' =>
-            $invoice->billing_reason
+            'billing_reason' => $invoice->billing_reason
                 ?? null,
 
-            'url' =>
-            $invoice->hosted_invoice_url
+            'url' => $invoice->hosted_invoice_url
                 ?? null,
 
-            'pdf' =>
-            $invoice->invoice_pdf
+            'pdf' => $invoice->invoice_pdf
                 ?? null,
         ];
     }

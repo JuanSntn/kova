@@ -7,7 +7,6 @@ import {
 } from 'react'
 
 import {
-    Building2Icon,
     ImageIcon,
     LoaderCircleIcon,
     MailIcon,

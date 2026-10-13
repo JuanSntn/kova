@@ -3,7 +3,6 @@
 namespace App\Http\Requests\Settings;
 
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 class UpdateTaxRequest extends FormRequest
 {
@@ -16,37 +15,23 @@ class UpdateTaxRequest extends FormRequest
     {
         return [
             'name' => [
-                'sometimes',
-                'required',
-                'string',
-                'max:100',
+                'prohibited',
             ],
 
             'code' => [
-                'sometimes',
-                'required',
-                'string',
-                'max:30',
+                'prohibited',
             ],
 
             'factor_type' => [
-                'sometimes',
-                'required',
-                Rule::in([
-                    'rate',
-                    'exempt',
-                ]),
+                'prohibited',
             ],
 
             'rate' => [
-                'nullable',
-                'numeric',
-                'min:0',
-                'max:999.9999',
+                'prohibited',
             ],
 
             'is_active' => [
-                'sometimes',
+                'required',
                 'boolean',
             ],
         ];

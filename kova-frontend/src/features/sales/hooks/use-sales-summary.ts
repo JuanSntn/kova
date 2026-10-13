@@ -10,18 +10,20 @@ import {
 
 export function useSalesSummary(
     tenantId: string,
+    branchId: string,
 ) {
     return useQuery({
         queryKey:
             salesQueryKeys.summary(
                 tenantId,
+                branchId,
             ),
 
         queryFn:
             getSalesSummary,
 
         enabled:
-            Boolean(tenantId),
+            Boolean(tenantId && branchId),
 
         staleTime:
             60 * 1000,

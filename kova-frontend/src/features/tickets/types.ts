@@ -5,6 +5,22 @@ export type TicketBusiness = {
     logo_url: string | null
 }
 
+export type TicketBranch = {
+    id: string
+    code: string
+    name: string
+    phone: string | null
+    postal_code: string | null
+    state: string | null
+    municipality: string | null
+    locality: string | null
+    city: string | null
+    neighborhood: string | null
+    street: string | null
+    exterior_number: string | null
+    interior_number: string | null
+}
+
 export type TicketVisibility = {
     logo: boolean
     business_name: boolean
@@ -50,6 +66,9 @@ export type TicketSettings = {
     invoice: {
         show_qr: boolean
         qr_text: string | null
+        url: string | null
+        access_code: string | null
+        entry_url: string | null
     }
 
     printing:
@@ -59,8 +78,14 @@ export type TicketSettings = {
 export type TicketSaleItem = {
     name: string
     quantity: number
+    base_unit_price: number
     unit_price: number
     line_total: number
+    modifiers: {
+        group_name: string
+        option_name: string
+        price_adjustment: number
+    }[]
 }
 
 export type TicketSale = {
@@ -93,6 +118,8 @@ export type TicketDocument = {
 
     business:
     TicketBusiness
+
+    branch: TicketBranch | null
 
     settings:
     TicketSettings

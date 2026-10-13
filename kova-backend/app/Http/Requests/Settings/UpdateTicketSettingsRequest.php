@@ -15,6 +15,11 @@ class UpdateTicketSettingsRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'tenant_id' => ['prohibited'],
+            'plan' => ['prohibited'],
+            'allows_invoicing' => ['prohibited'],
+            'fiscal_ready' => ['prohibited'],
+            'branch_ready' => ['prohibited'],
             'folio_prefix' => [
                 'required',
                 'string',

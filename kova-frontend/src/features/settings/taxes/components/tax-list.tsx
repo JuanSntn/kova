@@ -49,11 +49,7 @@ export function TaxList({
                     </h2>
 
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                        {taxes.length}{' '}
-                        {taxes.length ===
-                            1
-                            ? 'impuesto configurado'
-                            : 'impuestos configurados'}
+                        Kova mantiene estos tratamientos para evitar tasas fiscales inválidas.
                     </p>
                 </div>
             </div>
@@ -72,8 +68,7 @@ export function TaxList({
                     </p>
 
                     <p className="mt-1 text-xs text-muted-foreground">
-                        Agrega un impuesto para
-                        comenzar.
+                        No pudimos encontrar los tratamientos fiscales administrados por Kova.
                     </p>
                 </div>
             ) : (

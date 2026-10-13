@@ -5,6 +5,7 @@ import { SessionProvider, useSession } from '@/features/auth/session-context'
 import { RouterProvider } from '@tanstack/react-router'
 import { router } from '@/routes/router'
 import { queryClient } from '@/lib/query-client'
+import { BranchProvider } from '@/features/branches/branch-context'
 
 function AppRouter() {
   const { ensureSession } = useSession()
@@ -42,8 +43,10 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <SessionProvider>
-        <AppRouter />
-        <SessionExpiryBridge />
+        <BranchProvider>
+          <AppRouter />
+          <SessionExpiryBridge />
+        </BranchProvider>
       </SessionProvider>
     </QueryClientProvider>
   )

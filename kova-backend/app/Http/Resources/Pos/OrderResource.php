@@ -10,6 +10,13 @@ class OrderResource extends JsonResource
     /**
      * @return array<string, mixed>
      */
+    private function inventoryWarnings(): array
+    {
+        $snapshot = \Illuminate\Support\Facades\DB::table('inventory_operations')->where('tenant_id', $this->tenant_id)->where('order_id', $this->id)->value('snapshot');
+        if (!$snapshot) return [];
+        return collect(json_decode($snapshot, true)['lines'] ?? [])->filter(fn ($line) => $line['negative'])->map(fn ($line) => 'Existencia negativa: '.$line['name'])->values()->all();
+    }
+
     public function toArray(Request $request): array
     {
         return [
@@ -27,10 +34,12 @@ class OrderResource extends JsonResource
             'payment_method' => $this->payment_method,
             'amount_received' => $this->amount_received,
             'change_amount' => $this->change_amount,
+            'inventory_warnings' => $this->inventoryWarnings(),
             'paid_at' => $this->paid_at?->toISOString(),
             'items' => $this->whenLoaded('items', fn() => $this->items->map(fn($item): array => [
                 'product_id' => $item->product?->public_id,
                 'product_name' => $item->product_name_snapshot,
+                'modifiers' => $item->modifiers_snapshot ?? [],
                 'unit_price' => $item->unit_price_snapshot,
                 'quantity' => $item->quantity,
                 'tax_name' => $item->tax_name_snapshot,

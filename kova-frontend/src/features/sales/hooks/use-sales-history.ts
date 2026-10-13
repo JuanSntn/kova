@@ -14,12 +14,14 @@ import type {
 
 export function useSalesHistory(
     tenantId: string,
+    branchId: string,
     filters: SalesFilters,
 ) {
     return useQuery({
         queryKey:
             salesQueryKeys.history(
                 tenantId,
+                branchId,
                 filters,
             ),
 
@@ -29,7 +31,7 @@ export function useSalesHistory(
             ),
 
         enabled:
-            Boolean(tenantId),
+            Boolean(tenantId && branchId),
 
         placeholderData:
             (previous) =>

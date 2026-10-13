@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
@@ -23,6 +24,12 @@ class Product extends Model
         'image_path',
         'sort_order',
         'is_active',
+        'preparation_station',
+        'billing_enabled',
+        'sat_product_service_code',
+        'sat_unit_code',
+        'sat_unit_name',
+        'sat_tax_object_code',
     ];
 
     protected function casts(): array
@@ -31,6 +38,7 @@ class Product extends Model
             'price' => 'decimal:2',
             'sort_order' => 'integer',
             'is_active' => 'boolean',
+            'billing_enabled' => 'boolean',
         ];
     }
 
@@ -65,5 +73,10 @@ class Product extends Model
         return $this->belongsTo(
             Tax::class
         );
+    }
+
+    public function branchSettings(): HasMany
+    {
+        return $this->hasMany(BranchProductSetting::class);
     }
 }

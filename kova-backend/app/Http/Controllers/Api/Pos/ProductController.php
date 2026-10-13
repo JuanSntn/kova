@@ -7,8 +7,12 @@ use App\Http\Requests\Pos\StoreProductRequest;
 use App\Http\Requests\Pos\UpdateProductRequest;
 use App\Http\Resources\Pos\ProductResource;
 use App\Models\Product;
+use App\Services\Branches\BranchProductService;
 use App\Services\Pos\ProductService;
+use App\Services\Subscriptions\CatalogAccessService;
+use App\Services\Subscriptions\EntitlementService;
 use App\Services\Taxes\ProductTaxService;
+use App\Tenancy\CurrentBranch;
 use App\Tenancy\CurrentTenant;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
@@ -19,6 +23,8 @@ class ProductController extends Controller
         private readonly ProductService $products,
         private readonly ProductTaxService $taxes,
         private readonly CurrentTenant $currentTenant,
+        private readonly CatalogAccessService $catalogAccess,
+        private readonly EntitlementService $entitlements,
     ) {}
 
     public function index(): JsonResponse
@@ -44,11 +50,19 @@ class ProductController extends Controller
         );
 
         return response()->json([
-            'data' =>
-            ProductResource::collection(
+            'data' => ProductResource::collection(
                 $products
             ),
+            'meta' => $this->catalogMeta($tenant),
         ]);
+    }
+
+    public function operationalIndex(CurrentBranch $currentBranch, BranchProductService $branchProducts): JsonResponse
+    {
+        $tenant = $this->currentTenant->get();
+        request()->attributes->set('default_tax', $this->taxes->defaultTax($tenant));
+
+        return response()->json(['data' => ProductResource::collection($branchProducts->list($tenant, $currentBranch->get()))]);
     }
 
     public function store(
@@ -77,8 +91,7 @@ class ProductController extends Controller
         );
 
         return response()->json([
-            'data' =>
-            new ProductResource(
+            'data' => new ProductResource(
                 $product
             ),
         ], 201);
@@ -93,10 +106,10 @@ class ProductController extends Controller
 
         $productModel =
             $this->products
-            ->findForTenant(
-                tenant: $tenant,
-                publicId: $product,
-            );
+                ->findForTenant(
+                    tenant: $tenant,
+                    publicId: $product,
+                );
 
         Gate::authorize(
             'update',
@@ -118,11 +131,25 @@ class ProductController extends Controller
         );
 
         return response()->json([
-            'data' =>
-            new ProductResource(
+            'data' => new ProductResource(
                 $product
             ),
         ]);
+    }
+
+    private function catalogMeta($tenant): array
+    {
+        $subscription = $this->entitlements->current($tenant);
+        $usage = $this->catalogAccess->usage($tenant);
+
+        return [
+            'plan' => [
+                'code' => (string) ($subscription?->version?->plan?->code ?? ''),
+                'name' => (string) ($subscription?->version?->name ?? 'Plan actual'),
+            ],
+            'usage' => $usage['products'],
+            'category_usage' => $usage['categories'],
+        ];
     }
 
     public function destroy(
@@ -133,10 +160,10 @@ class ProductController extends Controller
 
         $productModel =
             $this->products
-            ->findForTenant(
-                tenant: $tenant,
-                publicId: $product,
-            );
+                ->findForTenant(
+                    tenant: $tenant,
+                    publicId: $product,
+                );
 
         Gate::authorize(
             'delete',
@@ -148,8 +175,7 @@ class ProductController extends Controller
         );
 
         return response()->json([
-            'message' =>
-            'Producto eliminado correctamente.',
+            'message' => 'Producto eliminado correctamente.',
         ]);
     }
 }

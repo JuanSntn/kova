@@ -3,13 +3,18 @@
 namespace App\Services\Tickets;
 
 use App\Models\Order;
+use App\Models\OrderItem;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Fiscal\FiscalTicketService;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 
 final class TicketService
 {
     public function __construct(
         private readonly TicketSettingsService $settings,
+        private readonly FiscalTicketService $fiscalTickets,
     ) {}
 
     /**
@@ -28,17 +33,22 @@ final class TicketService
         |--------------------------------------------------------------------------
         */
 
+        $order->loadMissing('branch');
+        $branch = $order->branch;
+
         $setting =
             $this->settings
-            ->setting(
-                $tenant
-            );
+                ->setting(
+                    $tenant,
+                    $branch,
+                );
 
         $meta =
             $this->settings
-            ->meta(
-                $tenant
-            );
+                ->meta(
+                    $tenant,
+                    $branch,
+                );
 
         /*
         |--------------------------------------------------------------------------
@@ -47,8 +57,68 @@ final class TicketService
         */
 
         $order->loadMissing(
-            'items'
+            'items',
+            'ticket.invoice'
         );
+
+        $invoiceUrl =
+            null;
+
+        $invoiceAccessCode =
+            null;
+
+        $invoiceEntryUrl =
+            null;
+
+        $invoiceQrEnabled =
+            (bool) (
+                $meta['capabilities']['invoice_qr']
+                ?? false
+            )
+            &&
+            (bool) (
+                $meta['invoice_qr']['ready']
+                ?? false
+            )
+            &&
+            (bool) ($meta['sources']['branch_ready'] ?? false)
+            &&
+            (bool)
+            $setting
+                ->show_invoice_qr;
+
+        if (
+            $invoiceQrEnabled
+            &&
+            $order->ticket
+            &&
+            $order->ticket
+                ->fiscal_eligible
+            &&
+            ! $order->ticket->used_at
+            &&
+            $order->ticket
+            &&
+            $order->ticket
+                ->expires_at
+                ->isFuture()
+        ) {
+            $invoiceUrl =
+                $this->fiscalTickets
+                    ->publicUrl(
+                        $order->ticket
+                    );
+
+            $invoiceAccessCode =
+                $this->fiscalTickets
+                    ->formattedAccessCode(
+                        $order->ticket
+                    );
+
+            $invoiceEntryUrl =
+                $this->fiscalTickets
+                    ->entryUrl();
+        }
 
         /*
         |--------------------------------------------------------------------------
@@ -73,12 +143,12 @@ final class TicketService
         if ($createdBy !== null) {
             $cashierName =
                 User::query()
-                ->whereKey(
-                    $createdBy
-                )
-                ->value(
-                    'name'
-                );
+                    ->whereKey(
+                        $createdBy
+                    )
+                    ->value(
+                        'name'
+                    );
         }
 
         /*
@@ -104,9 +174,8 @@ final class TicketService
         */
 
         return [
-            'timezone' =>
-            (string) (
-                $tenant->timezone
+            'timezone' => (string) (
+                $branch?->timezone ?: $tenant->timezone
                 ?: config(
                     'app.timezone',
                     'UTC'
@@ -120,18 +189,16 @@ final class TicketService
             */
 
             'business' => [
-                'name' =>
-                $meta['business']['name'],
+                'name' => $meta['business']['name'],
 
-                'phone' =>
-                $meta['business']['phone'],
+                'phone' => $meta['business']['phone'],
 
-                'public_email' =>
-                $meta['business']['public_email'],
+                'public_email' => $meta['business']['public_email'],
 
-                'logo_url' =>
-                $meta['business']['logo_url'],
+                'logo_url' => $meta['business']['logo_url'],
             ],
+
+            'branch' => $meta['branch'],
 
             /*
             |--------------------------------------------------------------------------
@@ -140,131 +207,106 @@ final class TicketService
             */
 
             'settings' => [
-                'header_text' =>
-                $setting
+                'header_text' => $setting
                     ->header_text,
 
-                'footer_text' =>
-                $setting
+                'footer_text' => $setting
                     ->footer_text,
 
-                'additional_text' =>
-                $setting
+                'additional_text' => $setting
                     ->additional_text,
 
                 'visibility' => [
-                    'logo' =>
-                    (bool)
+                    'logo' => (bool)
                     $setting
                         ->show_logo,
 
-                    'business_name' =>
-                    (bool)
+                    'business_name' => (bool)
                     $setting
                         ->show_business_name,
 
-                    'branch_name' =>
-                    (bool)
+                    'branch_name' => (bool)
                     $setting
                         ->show_branch_name,
 
-                    'address' =>
-                    (bool)
+                    'address' => (bool)
                     $setting
                         ->show_address,
 
-                    'phone' =>
-                    (bool)
+                    'phone' => (bool)
                     $setting
                         ->show_phone,
 
-                    'email' =>
-                    (bool)
+                    'email' => (bool)
                     $setting
                         ->show_email,
 
-                    'rfc' =>
-                    (bool)
+                    'rfc' => (bool)
                     $setting
                         ->show_rfc,
 
-                    'cashier' =>
-                    (bool)
+                    'cashier' => (bool)
                     $setting
                         ->show_cashier,
 
-                    'folio' =>
-                    (bool)
+                    'folio' => (bool)
                     $setting
                         ->show_folio,
 
-                    'datetime' =>
-                    (bool)
+                    'datetime' => (bool)
                     $setting
                         ->show_datetime,
 
-                    'order_type' =>
-                    (bool)
+                    'order_type' => (bool)
                     $setting
                         ->show_order_type,
 
-                    'unit_price' =>
-                    (bool)
+                    'unit_price' => (bool)
                     $setting
                         ->show_unit_price,
 
-                    'tax_breakdown' =>
-                    (bool)
+                    'tax_breakdown' => (bool)
                     $setting
                         ->show_tax_breakdown,
 
-                    'payment_method' =>
-                    (bool)
+                    'payment_method' => (bool)
                     $setting
                         ->show_payment_method,
 
-                    'cash_received' =>
-                    (bool)
+                    'cash_received' => (bool)
                     $setting
                         ->show_cash_received,
 
-                    'change' =>
-                    (bool)
+                    'change' => (bool)
                     $setting
                         ->show_change,
                 ],
 
-                /*
-                 * Facturación todavía no se renderiza
-                 * porque fiscal_ready sigue en false.
-                 */
                 'invoice' => [
-                    'show_qr' =>
-                    (bool)
-                    $setting
-                        ->show_invoice_qr
+                    'show_qr' => $invoiceQrEnabled
                         &&
-                        (bool)
-                        $meta['sources']['fiscal_ready'],
+                        $invoiceUrl !== null,
 
-                    'qr_text' =>
-                    $setting
+                    'qr_text' => $setting
                         ->invoice_qr_text,
+
+                    'url' => $invoiceUrl,
+
+                    'access_code' => $invoiceAccessCode,
+
+                    'entry_url' => $invoiceEntryUrl,
                 ],
 
                 'printing' => [
-                    'paper_width_mm' =>
-                    (int)
+                    'paper_width_mm' => (int)
                     $setting
                         ->paper_width_mm,
 
-                    'auto_print' =>
-                    (bool)
+                    'auto_print' => (bool)
                     $setting
                         ->auto_print,
 
-                    'copies' =>
-                    (int)
+                    'copies' => (int)
                     $setting
                         ->copies,
                 ],
@@ -280,89 +322,84 @@ final class TicketService
                 /*
                  * UUID público.
                  */
-                'id' =>
-                $order
+                'id' => $order
                     ->public_id,
 
-                'folio' =>
-                $order
+                'folio' => $order
                     ->folio,
 
-                'paid_at' =>
-                $order
+                'paid_at' => $order
                     ->paid_at
                     ?->toISOString(),
 
-                'order_type' =>
-                $order
+                'order_type' => $order
                     ->order_type,
 
-                'cashier' =>
-                $cashierName,
+                'cashier' => $cashierName,
 
-                'subtotal' =>
-                (float)
+                'subtotal' => (float)
                 $order
                     ->subtotal,
 
-                'tax_total' =>
-                (float)
+                'tax_total' => (float)
                 $order
                     ->tax_total,
 
-                'total' =>
-                (float)
+                'total' => (float)
                 $order
                     ->total,
 
-                'payment_method' =>
-                $order
+                'payment_method' => $order
                     ->payment_method,
 
-                'amount_received' =>
-                $amountReceived !==
+                'amount_received' => $amountReceived !==
                     null
                     ? (float)
                     $amountReceived
                     : null,
 
-                'change_amount' =>
-                $changeAmount !==
+                'change_amount' => $changeAmount !==
                     null
                     ? (float)
                     $changeAmount
                     : null,
 
-                'items' =>
-                $order
+                'items' => $order
                     ->items
                     ->map(
-                        fn(
-                            $item
-                        ): array => [
-                            'name' =>
-                            $item
-                                ->product_name_snapshot,
-
-                            'quantity' =>
-                            (int)
-                            $item
-                                ->quantity,
-
-                            'unit_price' =>
-                            (float)
-                            $item
-                                ->unit_price_snapshot,
-
-                            'line_total' =>
-                            (float)
-                            $item
-                                ->line_total,
-                        ]
+                        fn (OrderItem $item): array => $this->ticketItem($item)
                     )
                     ->values()
                     ->all(),
             ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function ticketItem(OrderItem $item): array
+    {
+        $modifierTotal = BigDecimal::of('0.00');
+        $modifiers = collect($item->modifiers_snapshot ?? [])->map(function (array $modifier) use (&$modifierTotal): array {
+            $price = BigDecimal::of((string) ($modifier['price_adjustment'] ?? '0.00'))->toScale(2, RoundingMode::HalfUp);
+            $modifierTotal = $modifierTotal->plus($price);
+
+            return [
+                'group_name' => (string) ($modifier['group_name'] ?? ''),
+                'option_name' => (string) ($modifier['option_name'] ?? ''),
+                'price_adjustment' => (float) (string) $price,
+            ];
+        })->values()->all();
+
+        $unitPrice = BigDecimal::of((string) $item->unit_price_snapshot)->toScale(2, RoundingMode::HalfUp);
+        $baseUnitPrice = $unitPrice->minus($modifierTotal)->toScale(2, RoundingMode::HalfUp);
+
+        return [
+            'name' => $item->product_name_snapshot,
+            'quantity' => (int) $item->quantity,
+            'base_unit_price' => (float) (string) $baseUnitPrice,
+            'unit_price' => (float) (string) $unitPrice,
+            'line_total' => (float) $item->line_total,
+            'modifiers' => $modifiers,
         ];
     }
 }

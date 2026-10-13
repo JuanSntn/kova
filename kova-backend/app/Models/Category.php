@@ -19,6 +19,7 @@ class Category extends Model
         'name',
         'sort_order',
         'is_active',
+        'billing_enabled',
     ];
 
     protected function casts(): array
@@ -26,6 +27,7 @@ class Category extends Model
         return [
             'sort_order' => 'integer',
             'is_active' => 'boolean',
+            'billing_enabled' => 'boolean',
         ];
     }
 

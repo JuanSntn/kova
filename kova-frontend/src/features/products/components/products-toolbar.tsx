@@ -36,6 +36,7 @@ export function ProductsToolbar({
                             event.target.value,
                         )
                     }
+                    aria-label="Buscar producto"
                     placeholder="Buscar producto..."
                     className="h-9 pl-9"
                 />
@@ -52,6 +53,7 @@ export function ProductsToolbar({
                     }
                     className="h-7 gap-1.5 px-2.5"
                     aria-label="Ver como tarjetas"
+                    aria-pressed={viewMode === 'cards'}
                     title="Ver como tarjetas"
                     onClick={() =>
                         onViewModeChange('cards')
@@ -60,7 +62,7 @@ export function ProductsToolbar({
                     <LayoutGridIcon className="size-4" />
 
                     <span className="hidden sm:inline">
-                        Cards
+                        Tarjetas
                     </span>
                 </Button>
 
@@ -74,6 +76,7 @@ export function ProductsToolbar({
                     }
                     className="h-7 gap-1.5 px-2.5"
                     aria-label="Ver como tabla"
+                    aria-pressed={viewMode === 'table'}
                     title="Ver como tabla"
                     onClick={() =>
                         onViewModeChange('table')

@@ -1,5 +1,8 @@
+import axios from 'axios'
+import { useEmailVerification } from '@/features/auth/use-email-verification'
 import {
   Link,
+  useNavigate,
   useRouterState,
 } from '@tanstack/react-router'
 
@@ -12,6 +15,7 @@ import {
 import {
   type FormEvent,
   useState,
+  useEffect,
 } from 'react'
 
 import {
@@ -44,6 +48,14 @@ import {
 } from '@/features/auth/components/auth-layout'
 
 export function VerifyEmailPage() {
+  const navigate = useNavigate()
+  const verification = useEmailVerification()
+  useEffect(() => {
+    if (verification.status?.status === 'verified') {
+      void navigate({ to: '/email-verified', replace: true })
+    }
+  }, [verification.status?.status, navigate])
+
   const routeState =
     useRouterState({
       select: (state) =>
@@ -78,6 +90,8 @@ export function VerifyEmailPage() {
   ) {
     event.preventDefault()
 
+    if (isSending || verification.remaining > 0) return
+
     setMessage('')
     setError('')
     setIsSending(true)
@@ -85,15 +99,21 @@ export function VerifyEmailPage() {
     try {
       const response =
         await resendVerification(
-          email
+          (verification.status?.email ?? email)
             .trim()
             .toLowerCase(),
         )
 
-      setMessage(
-        response.message,
-      )
+      setMessage(response.message)
+      verification.cooldown(response.retry_after ?? 60)
+      await verification.refresh()
     } catch (exception) {
+      if (axios.isAxiosError(exception) && exception.response?.status === 429) {
+        const seconds = Number(exception.response.headers['retry-after'] ?? 60)
+        verification.cooldown(Number.isFinite(seconds) ? seconds : 60)
+        setError('Espera a que termine la cuenta regresiva antes de reenviar.')
+        return
+      }
       setError(
         getApiError(
           exception,
@@ -136,23 +156,22 @@ export function VerifyEmailPage() {
             onSubmit={
               handleResend
             }
-            noValidate
           >
             <FieldGroup className="gap-4">
-              {message && (
-                <Alert>
+              {(message || verification.status?.message) && (
+                <Alert role="status" aria-live="polite">
                   <CheckCircle2 className="size-4" />
 
                   <AlertDescription className="text-sm">
-                    {message}
+                    {message || verification.status?.message}
                   </AlertDescription>
                 </Alert>
               )}
 
-              {error && (
+              {(error || verification.error) && (
                 <Alert variant="destructive">
                   <AlertDescription className="text-sm">
-                    {error}
+                    {error || verification.error}
                   </AlertDescription>
                 </Alert>
               )}
@@ -170,7 +189,8 @@ export function VerifyEmailPage() {
                   type="email"
                   autoComplete="email"
                   inputMode="email"
-                  value={email}
+                  value={verification.status?.email ?? email}
+                  readOnly={Boolean(verification.status?.email)}
                   onChange={(
                     event,
                   ) =>
@@ -192,7 +212,8 @@ export function VerifyEmailPage() {
                 className="h-10 w-full text-sm"
                 disabled={
                   isSending ||
-                  !email.trim()
+                  verification.remaining > 0 ||
+                  !(verification.status?.email ?? email).trim()
                 }
               >
                 {isSending ? (
@@ -211,11 +232,18 @@ export function VerifyEmailPage() {
                       aria-hidden
                     />
 
-                    Reenviar enlace
+                    {verification.remaining > 0 ? `Reenviar en ${verification.remaining} s` : 'Reenviar enlace'}
                   </>
                 )}
               </Button>
 
+              <p className="text-center text-sm text-muted-foreground">
+                {verification.status?.status === 'pending'
+                  ? 'Esta página se actualizará cuando confirmes tu correo, incluso si abres el enlace en otro dispositivo.'
+                  : verification.status?.status === 'unavailable'
+                    ? 'Inicia sesión con tu contraseña para recuperar el seguimiento de la verificación.'
+                    : 'Comprobando el estado de tu correo…'}
+              </p>
               <FieldDescription className="text-center text-sm">
                 ¿Ya verificaste tu correo?{' '}
 

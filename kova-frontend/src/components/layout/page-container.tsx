@@ -9,7 +9,7 @@ export function PageContainer({
   return (
     <main
       className={cn(
-        'mx-auto flex w-full max-w-screen-2xl',
+        'mx-auto flex min-w-0 w-full max-w-screen-2xl',
         'flex-1 flex-col gap-6',
         'px-4 py-6',
         'sm:px-6',

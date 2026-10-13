@@ -80,6 +80,11 @@ class Tenant extends Model
         return $this->hasMany(PlanSubscription::class);
     }
 
+    public function fiscalProfile(): HasOne
+    {
+        return $this->hasOne(TenantFiscalProfile::class);
+    }
+
     public function branches(): HasMany
     {
         return $this->hasMany(Branch::class);

@@ -28,21 +28,33 @@ return [
         'items' => [
             [
                 'key' => 'pos',
+                'feature' => 'allows_counter_orders',
                 'label' => 'POS',
                 'path' => '/pos',
                 'icon' => 'shopping-cart',
-                'permission' =>
-                PermissionName::OrdersCreate->value,
+                'permission' => PermissionName::OrdersCreate->value,
                 'order' => 10,
             ],
 
+            [
+                'key' => 'cash', 'label' => 'Caja y turnos', 'path' => '/cash', 'icon' => 'wallet',
+                'permission' => PermissionName::CashView->value, 'order' => 15,
+            ],
+            [
+                'key' => 'preparation',
+                'feature' => 'allows_preparation',
+                'label' => 'Comandas',
+                'path' => '/preparation',
+                'icon' => 'chef-hat',
+                'permission' => PermissionName::PreparationView->value,
+                'order' => 17,
+            ],
             [
                 'key' => 'sales-history',
                 'label' => 'Ventas',
                 'path' => '/sales',
                 'icon' => 'chart-no-axes-combined',
-                'permission' =>
-                PermissionName::OrdersView->value,
+                'permission' => PermissionName::OrdersView->value,
                 'order' => 20,
             ],
         ],
@@ -55,6 +67,11 @@ return [
 
         'items' => [
             [
+                'key' => 'inventory', 'label' => 'Inventario', 'path' => '/inventory',
+                'icon' => 'package', 'permission' => PermissionName::InventoryView->value,
+                'feature' => 'allows_inventory', 'order' => 20,
+            ],
+            [
                 'key' => 'menu',
                 'label' => 'Menú',
                 'path' => '/menu',
@@ -65,16 +82,14 @@ return [
                     [
                         'key' => 'products',
                         'label' => 'Productos',
-                        'permission' =>
-                        PermissionName::ProductsView->value,
+                        'permission' => PermissionName::ProductsView->value,
                         'order' => 10,
                     ],
 
                     [
                         'key' => 'categories',
                         'label' => 'Categorías',
-                        'permission' =>
-                        PermissionName::CategoriesView->value,
+                        'permission' => PermissionName::CategoriesView->value,
                         'order' => 20,
                     ],
                 ],
@@ -93,8 +108,7 @@ return [
                 'label' => 'Negocio',
                 'path' => '/settings/business',
                 'icon' => 'building-2',
-                'permission' =>
-                PermissionName::BusinessSettingsView->value,
+                'permission' => PermissionName::BusinessSettingsView->value,
                 'order' => 1,
             ],
 
@@ -103,9 +117,26 @@ return [
                 'label' => 'Ticket',
                 'path' => '/settings/ticket',
                 'icon' => 'receipt-text',
-                'permission' =>
-                PermissionName::TicketSettingsView->value,
+                'permission' => PermissionName::TicketSettingsView->value,
                 'order' => 3,
+            ],
+
+            [
+                'key' => 'branches-settings',
+                'label' => 'Sucursales',
+                'path' => '/settings/branches',
+                'icon' => 'store',
+                'permission' => PermissionName::BusinessSettingsView->value,
+                'order' => 2,
+            ],
+
+            [
+                'key' => 'users-settings',
+                'label' => 'Equipo',
+                'path' => '/settings/users',
+                'icon' => 'users',
+                'permission' => PermissionName::UsersView->value,
+                'order' => 4,
             ],
 
             [
@@ -113,9 +144,18 @@ return [
                 'label' => 'Impuestos',
                 'path' => '/settings/taxes',
                 'icon' => 'percent',
-                'permission' =>
-                PermissionName::TaxesView->value,
+                'permission' => PermissionName::TaxesView->value,
                 'order' => 5,
+            ],
+
+            [
+                'key' => 'fiscal-settings',
+                'label' => 'Facturación fiscal',
+                'path' => '/settings/fiscal',
+                'icon' => 'file-badge',
+                'permission' => PermissionName::FiscalView->value,
+                'feature' => 'allows_invoicing',
+                'order' => 7,
             ],
 
             [
@@ -123,8 +163,7 @@ return [
                 'label' => 'Suscripción',
                 'path' => '/billing',
                 'icon' => 'credit-card',
-                'permission' =>
-                PermissionName::BillingView->value,
+                'permission' => PermissionName::BillingView->value,
                 'order' => 10,
             ],
         ],

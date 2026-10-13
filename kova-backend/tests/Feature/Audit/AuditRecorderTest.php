@@ -62,7 +62,7 @@ class AuditRecorderTest extends TestCase
             $this->assertTrue($wasRejected);
         });
 
-        $rawEvent = AuditEvent::withoutGlobalScopes()->sole();
+        $rawEvent = AuditEvent::withoutGlobalScopes()->where('action', 'branch.updated')->sole();
         $this->assertStringNotContainsString('Nueva', (string) $rawEvent->getRawOriginal('new_values'));
         $this->assertStringNotContainsString(
             'Corrección autorizada',

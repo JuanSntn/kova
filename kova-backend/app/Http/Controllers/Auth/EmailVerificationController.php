@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\ResendVerificationRequest;
 use App\Models\User;
+use App\Services\EmailVerificationService;
+use Illuminate\Http\Request;
 use Illuminate\Auth\Events\Verified;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -30,18 +32,50 @@ class EmailVerificationController extends Controller
         );
     }
 
-    public function resend(ResendVerificationRequest $request): JsonResponse
+    public function status(Request $request, EmailVerificationService $verification): JsonResponse
     {
-        $user = User::query()
-            ->where('email', $request->string('email')->toString())
-            ->first();
+        $user = $verification->pendingUser($request);
 
-        if ($user && ! $user->hasVerifiedEmail()) {
-            $user->sendEmailVerificationNotification();
+        return response()->json($user ? [
+            'status' => $user->hasVerifiedEmail() ? 'verified' : 'pending',
+            'email' => $user->email,
+            'retry_after' => $verification->retryAfter($user),
+            'message' => ($delivery = $request->session()->get('email_verification.delivery'))
+                ? $verification->message($delivery) : null,
+        ] : ['status' => 'unavailable'])->header('Cache-Control', 'no-store, private');
+    }
+
+    public function resend(ResendVerificationRequest $request, EmailVerificationService $verification): JsonResponse
+    {
+        $user = User::query()->where('email', $request->string('email')->toString())->first();
+        $pending = $verification->pendingUser($request);
+        $ownsRequest = $pending && $user && $pending->is($user);
+        $generic = ['message' => 'Si la cuenta existe y está pendiente, enviaremos un nuevo enlace.'];
+
+        if (! $user || $user->hasVerifiedEmail()) {
+            return response()->json($ownsRequest ? [
+                'message' => 'Tu correo ya está verificado. Puedes iniciar sesión.',
+                'status' => 'verified',
+            ] : $generic);
         }
 
+        $delivery = $verification->send($user);
+        if (! $ownsRequest) {
+            return response()->json($generic);
+        }
+
+        if ($delivery['delivery'] !== 'throttled') {
+            $request->session()->put('email_verification.delivery', $delivery['delivery']);
+        }
+        $status = match ($delivery['delivery']) {
+            'failed' => 503,
+            'throttled' => 429,
+            default => 200,
+        };
+
         return response()->json([
-            'message' => 'Si la cuenta existe y está pendiente, enviaremos un nuevo enlace.',
-        ]);
+            ...$delivery,
+            'message' => $verification->message($delivery['delivery']),
+        ], $status)->header('Retry-After', (string) $delivery['retry_after']);
     }
 }

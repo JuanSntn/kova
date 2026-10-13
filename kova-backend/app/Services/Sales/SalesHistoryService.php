@@ -4,6 +4,7 @@ namespace App\Services\Sales;
 
 use App\Models\Order;
 use App\Models\Tenant;
+use App\Models\Branch;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 
@@ -11,10 +12,12 @@ final class SalesHistoryService
 {
     public function paginate(
         Tenant $tenant,
+        Branch $branch,
         array $filters,
     ): LengthAwarePaginator {
         $query = $tenant
             ->orders()
+            ->where('branch_id', $branch->id)
             ->where('status', 'paid')
             ->whereNotNull('paid_at');
 
@@ -43,7 +46,7 @@ final class SalesHistoryService
             );
         }
 
-        $timezone = $tenant->timezone
+        $timezone = $branch->timezone ?: $tenant->timezone
             ?: config('app.timezone', 'UTC');
 
         /*

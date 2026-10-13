@@ -16,6 +16,8 @@ import type {
   TenantSummary,
 } from '@/features/auth/session-types'
 import { setApiTenantId } from '@/lib/api'
+import { checkoutContextLocked, pendingCheckoutContext } from '@/features/pos/checkout-storage'
+import { toast } from 'sonner'
 
 type SessionContextValue = {
   activeTenant: TenantSummary | null
@@ -42,6 +44,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const activeTenantIdRef = useRef<string | null>(null)
 
   const selectTenant = useCallback((tenantId: string | null) => {
+    const pending = pendingCheckoutContext()
+    if (tenantId !== activeTenantIdRef.current && checkoutContextLocked() && tenantId !== pending?.tenant) {
+      toast.error('Verifica la venta pendiente antes de cambiar de negocio.')
+      return
+    }
     activeTenantIdRef.current = tenantId
     setApiTenantId(tenantId)
     setActiveTenantIdState(tenantId)
@@ -62,7 +69,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     (payload: SessionPayload) => {
       sessionRef.current = payload
       sessionLoadedRef.current = true
-      const firstTenantId = payload.tenants[0]?.id ?? null
+      const pending = pendingCheckoutContext()
+      const firstTenantId = payload.tenants.find(tenant => tenant.id === pending?.tenant && tenant.membership_id === pending.membership)?.id ?? payload.tenants[0]?.id ?? null
       activeTenantIdRef.current = firstTenantId
       setApiTenantId(firstTenantId)
       setSession(payload)
@@ -86,7 +94,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sessionRef.current = payload
         sessionLoadedRef.current = true
         pendingSessionRef.current = null
-        const firstTenantId = payload.tenants[0]?.id ?? null
+        const pending = pendingCheckoutContext()
+      const firstTenantId = payload.tenants.find(tenant => tenant.id === pending?.tenant && tenant.membership_id === pending.membership)?.id ?? payload.tenants[0]?.id ?? null
         activeTenantIdRef.current = firstTenantId
         setApiTenantId(firstTenantId)
         setSession(payload)

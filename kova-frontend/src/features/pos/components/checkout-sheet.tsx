@@ -24,6 +24,7 @@ import {
 import {
     CashPayment,
 } from './cash-payment'
+import { cents } from '../money'
 import {
     CheckoutSuccess,
 } from './checkout-success'
@@ -36,6 +37,8 @@ import type {
 } from '../types'
 
 type CheckoutSheetProps = {
+    taxBase?: string | number
+    taxTotal?: string | number
     open: boolean
 
     onOpenChange: (
@@ -66,6 +69,8 @@ type CheckoutSheetProps = {
 }
 
 export function CheckoutSheet({
+    taxBase,
+    taxTotal,
     open,
     onOpenChange,
     items,
@@ -132,8 +137,7 @@ export function CheckoutSheet({
     const cashIsValid =
         paymentMethod !==
         'cash' ||
-        validReceived >=
-        totals.total
+        (/^\d+(\.\d{1,2})?$/.test(amountReceived) && cents(amountReceived) >= cents(totals.total))
 
     /*
     |--------------------------------------------------------------------------
@@ -459,6 +463,10 @@ export function CheckoutSheet({
 
                 <SheetFooter className="shrink-0 border-t bg-background px-6 py-4">
                     <div className="w-full space-y-3">
+                        {taxTotal !== undefined && <div className="text-sm text-muted-foreground">
+                            <div className="flex justify-between"><span>Base</span><span>{formatMoney(Number(taxBase ?? 0))}</span></div>
+                            <div className="flex justify-between"><span>Impuestos incluidos</span><span>{formatMoney(Number(taxTotal))}</span></div>
+                        </div>}
 
                         {/*
                          * Total

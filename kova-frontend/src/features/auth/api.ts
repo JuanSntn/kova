@@ -1,5 +1,6 @@
 export {
   getApiError,
+  getVerificationStatus,
   getSession,
   login,
   logoutRequest,

@@ -2,49 +2,52 @@
 
 namespace App\Services\Tickets;
 
+use App\Models\Branch;
 use App\Models\Tenant;
 use App\Models\TenantTicketSetting;
 use App\Services\Business\BusinessProfileService;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Http\Exceptions\HttpResponseException;
 
 final class TicketSettingsService
 {
     public function __construct(
         private readonly BusinessProfileService $business,
         private readonly TicketCapabilityService $capabilities,
+        private readonly InvoiceQrReadinessService $qrReadiness,
     ) {}
 
     public function setting(
         Tenant $tenant,
+        ?Branch $branch = null,
     ): TenantTicketSetting {
         $setting =
-            TenantTicketSetting::query()
-            ->firstOrCreate(
-                [
-                    'tenant_id' =>
-                    $tenant->getKey(),
-                ],
-                $this->defaults(),
+            clone $this->storedSetting(
+                $tenant
             );
 
-        /*
-         * Si un tenant bajó de plan,
-         * apagamos automáticamente
-         * opciones que ya no puede usar.
-         */
-        $this->restrictUnsupported(
+        return $this->applyEffectiveRestrictions(
             tenant: $tenant,
             setting: $setting,
+            branch: $branch,
         );
-
-        return $setting
-            ->refresh();
     }
 
     public function update(
         Tenant $tenant,
         array $data,
     ): TenantTicketSetting {
+        if ($data['show_invoice_qr'] ?? false) {
+            $readiness = $this->qrReadiness->for($tenant);
+            if (! $readiness['ready']) {
+                throw new HttpResponseException(response()->json([
+                    'message' => $readiness['message'],
+                    'code' => 'invoice_qr_not_ready',
+                    'errors' => ['show_invoice_qr' => [$readiness['message']]],
+                    'invoice_qr' => $readiness,
+                ], 422));
+            }
+        }
         if (
             ! $this->business
                 ->isComplete(
@@ -52,13 +55,18 @@ final class TicketSettingsService
                 )
         ) {
             throw ValidationException::withMessages([
-                'business_profile' =>
-                'Configura primero la información de tu negocio.',
+                'business_profile' => 'Configura primero la información de tu negocio.',
             ]);
         }
 
+        /*
+         * Trabajamos con la configuración REAL guardada.
+         *
+         * No utilizamos setting() aquí porque setting()
+         * devuelve una versión efectiva según el plan.
+         */
         $setting =
-            $this->setting(
+            $this->storedSetting(
                 $tenant
             );
 
@@ -70,25 +78,24 @@ final class TicketSettingsService
             );
 
         /*
-         * No confiamos en React para
-         * aplicar las capacidades del plan.
+         * Cuando una capacidad no está disponible,
+         * conservamos el valor previamente guardado.
+         *
+         * Esto evita destruir configuraciones durante
+         * un downgrade.
          */
         $data =
             $this->sanitizeForPlan(
                 tenant: $tenant,
+                setting: $setting,
                 data: $data,
             );
 
-        /*
-         * Si no existe logo,
-         * no permitimos marcarlo
-         * como visible.
-         */
         $business =
             $this->business
-            ->data(
-                $tenant
-            );
+                ->data(
+                    $tenant
+                );
 
         if (
             $business['logo_url'] === null
@@ -101,18 +108,17 @@ final class TicketSettingsService
             $data
         );
 
-        return $setting
-            ->refresh();
+        return $this->applyEffectiveRestrictions(
+            tenant: $tenant,
+            setting: $setting->refresh(),
+        );
     }
 
     public function prefix(
         Tenant $tenant,
+        ?Branch $branch = null,
     ): string {
-        return $this
-            ->setting(
-                $tenant
-            )
-            ->folio_prefix;
+        return $this->setting($tenant, $branch)->folio_prefix;
     }
 
     /**
@@ -120,203 +126,233 @@ final class TicketSettingsService
      */
     public function meta(
         Tenant $tenant,
+        ?Branch $branch = null,
     ): array {
         $business =
             $this->business
-            ->data(
-                $tenant
-            );
+                ->data(
+                    $tenant
+                );
+
+        $qr = $this->qrReadiness->for($tenant, (bool) $this->storedSetting($tenant)->show_invoice_qr);
 
         return [
-            'configuration_ready' =>
-            $business['is_complete'],
+            'invoice_qr' => $qr,
+            'configuration_ready' => $business['is_complete'],
 
-            'missing_business_fields' =>
-            $business['missing_fields'],
+            'missing_business_fields' => $business['missing_fields'],
 
-            'capabilities' =>
-            $this
-                ->capabilities
+            'capabilities' => $this->capabilities
                 ->for(
                     $tenant
                 ),
 
-            /*
-             * Estos dos módulos serán
-             * nuestras siguientes fases.
-             *
-             * Todavía no inventamos
-             * datos de Branch/Fiscal.
-             */
             'sources' => [
-                'business_ready' =>
-                $business['is_complete'],
+                'business_ready' => $business['is_complete'],
 
-                'branch_ready' =>
-                false,
+                'branch_ready' => $branch ? $this->qrReadiness->branchReady($tenant, $branch) : $qr['branches_ready'],
 
-                'fiscal_ready' =>
-                false,
+                'fiscal_ready' => $qr['fiscal_ready'],
             ],
 
             'business' => [
-                'name' =>
-                $business['name'],
+                'name' => $business['name'],
 
-                'phone' =>
-                $business['phone'],
+                'phone' => $business['phone'],
 
-                'public_email' =>
-                $business['public_email'],
+                'public_email' => $business['public_email'],
 
-                'logo_url' =>
-                $business['logo_url'],
+                'logo_url' => $business['logo_url'],
             ],
+
+            'branch' => $branch ? [
+                'id' => $branch->public_id,
+                'code' => $branch->code,
+                'name' => $branch->name,
+                'phone' => $branch->phone,
+                'postal_code' => $branch->postal_code,
+                'state' => $branch->state,
+                'municipality' => $branch->municipality,
+                'locality' => $branch->locality,
+                'city' => $branch->city,
+                'neighborhood' => $branch->neighborhood,
+                'street' => $branch->street,
+                'exterior_number' => $branch->exterior_number,
+                'interior_number' => $branch->interior_number,
+            ] : null,
         ];
     }
 
-    private function restrictUnsupported(
+    private function storedSetting(
+        Tenant $tenant,
+    ): TenantTicketSetting {
+        return TenantTicketSetting::query()
+            ->firstOrCreate(
+                [
+                    'tenant_id' => $tenant->getKey(),
+                ],
+                $this->defaults(),
+            );
+    }
+
+    /**
+     * Aplica restricciones efectivas en memoria.
+     *
+     * NO guarda estos cambios en base de datos.
+     *
+     * De esta manera un downgrade desactiva
+     * temporalmente capacidades sin eliminar
+     * la preferencia original del cliente.
+     */
+    private function applyEffectiveRestrictions(
         Tenant $tenant,
         TenantTicketSetting $setting,
-    ): void {
+        ?Branch $branch = null,
+    ): TenantTicketSetting {
         $capabilities =
-            $this
-            ->capabilities
-            ->for(
-                $tenant
-            );
-
-        $changes = [];
+            $this->capabilities
+                ->for(
+                    $tenant
+                );
 
         $map = [
-            'show_branch_name' =>
-            'branch_name',
+            'show_branch_name' => 'branch_name',
 
-            'show_address' =>
-            'address',
+            'show_address' => 'address',
 
-            'show_rfc' =>
-            'rfc',
+            'show_rfc' => 'rfc',
 
-            'show_order_type' =>
-            'order_type',
+            'show_order_type' => 'order_type',
 
-            'show_invoice_qr' =>
-            'invoice_qr',
+            'show_invoice_qr' => 'invoice_qr',
         ];
 
         foreach (
-            $map as
-            $field =>
-            $capability
+            $map as $field => $capability
         ) {
             if (
                 ! $capabilities[$capability]
-                && $setting->$field
             ) {
-                $changes[$field] =
-                    false;
+                $setting->setAttribute(
+                    $field,
+                    false
+                );
             }
         }
 
+        /*
+         * Aunque el plan permita facturación,
+         * el QR tampoco es efectivo mientras
+         * la configuración fiscal no esté lista.
+         */
         if (
-            ! $capabilities['invoice_qr']
+            ! $this->qrReadiness->for($tenant)['ready']
+            || ($branch && ! $this->qrReadiness->branchReady($tenant, $branch))
         ) {
-            $changes['invoice_qr_text'] =
-                null;
-        }
-
-        if (
-            $changes !== []
-        ) {
-            $setting->update(
-                $changes
+            $setting->setAttribute(
+                'show_invoice_qr',
+                false
             );
         }
+
+        return $setting;
     }
 
+    /**
+     * Evita modificar capacidades que el tenant
+     * no puede configurar actualmente.
+     *
+     * En vez de forzarlas a false, preservamos
+     * el valor almacenado previamente.
+     */
     private function sanitizeForPlan(
         Tenant $tenant,
+        TenantTicketSetting $setting,
         array $data,
     ): array {
         $capabilities =
-            $this
-            ->capabilities
-            ->for(
-                $tenant
-            );
+            $this->capabilities
+                ->for(
+                    $tenant
+                );
 
         $map = [
-            'show_logo' =>
-            'logo',
+            'show_logo' => 'logo',
 
-            'show_business_name' =>
-            'business_name',
+            'show_business_name' => 'business_name',
 
-            'show_branch_name' =>
-            'branch_name',
+            'show_branch_name' => 'branch_name',
 
-            'show_address' =>
-            'address',
+            'show_address' => 'address',
 
-            'show_phone' =>
-            'phone',
+            'show_phone' => 'phone',
 
-            'show_email' =>
-            'email',
+            'show_email' => 'email',
 
-            'show_rfc' =>
-            'rfc',
+            'show_rfc' => 'rfc',
 
-            'show_cashier' =>
-            'cashier',
+            'show_cashier' => 'cashier',
 
-            'show_folio' =>
-            'folio',
+            'show_folio' => 'folio',
 
-            'show_datetime' =>
-            'datetime',
+            'show_datetime' => 'datetime',
 
-            'show_order_type' =>
-            'order_type',
+            'show_order_type' => 'order_type',
 
-            'show_unit_price' =>
-            'unit_price',
+            'show_unit_price' => 'unit_price',
 
-            'show_tax_breakdown' =>
-            'tax_breakdown',
+            'show_tax_breakdown' => 'tax_breakdown',
 
-            'show_payment_method' =>
-            'payment_method',
+            'show_payment_method' => 'payment_method',
 
-            'show_cash_received' =>
-            'cash_received',
+            'show_cash_received' => 'cash_received',
 
-            'show_change' =>
-            'change',
+            'show_change' => 'change',
 
-            'show_invoice_qr' =>
-            'invoice_qr',
+            'show_invoice_qr' => 'invoice_qr',
         ];
 
         foreach (
-            $map as
-            $field =>
-            $capability
+            $map as $field => $capability
         ) {
             if (
                 ! $capabilities[$capability]
             ) {
                 $data[$field] =
-                    false;
+                    (bool) $setting
+                        ->getAttribute(
+                            $field
+                        );
             }
         }
 
+        /*
+         * El texto del QR también se conserva
+         * mientras facturación no esté disponible.
+         */
         if (
             ! $capabilities['invoice_qr']
         ) {
             $data['invoice_qr_text'] =
-                null;
+                $setting
+                    ->invoice_qr_text;
+        }
+
+        /*
+         * Si el plan sí permite facturación pero
+         * fiscal todavía no está listo, tampoco
+         * permitimos cambiar show_invoice_qr.
+         *
+         * Conservamos la preferencia previa.
+         */
+        if (
+            $capabilities['invoice_qr']
+            &&
+            ! $this->qrReadiness->for($tenant)['ready']
+        ) {
+            $data['show_invoice_qr'] =
+                (bool) $setting
+                    ->show_invoice_qr;
         }
 
         return $data;
@@ -325,90 +361,57 @@ final class TicketSettingsService
     private function defaults(): array
     {
         return [
-            'folio_prefix' =>
-            'POS',
+            'folio_prefix' => 'POS',
 
-            /*
-             * display_name queda sin uso.
-             *
-             * Conservamos la columna por ahora
-             * para no hacer una migración
-             * destructiva.
-             */
-            'display_name' =>
-            null,
+            'display_name' => null,
 
-            'header_text' =>
-            null,
+            'header_text' => null,
 
-            'footer_text' =>
-            '¡Gracias por tu compra!',
+            'footer_text' => '¡Gracias por tu compra!',
 
-            'additional_text' =>
-            null,
+            'additional_text' => null,
 
-            'show_logo' =>
-            true,
+            'show_logo' => true,
 
-            'show_business_name' =>
-            true,
+            'show_business_name' => true,
 
-            'show_branch_name' =>
-            true,
+            'show_branch_name' => true,
 
-            'show_address' =>
-            true,
+            'show_address' => true,
 
-            'show_phone' =>
-            true,
+            'show_phone' => true,
 
-            'show_email' =>
-            true,
+            'show_email' => true,
 
-            'show_rfc' =>
-            false,
+            'show_rfc' => false,
 
-            'show_cashier' =>
-            true,
+            'show_cashier' => true,
 
-            'show_folio' =>
-            true,
+            'show_folio' => true,
 
-            'show_datetime' =>
-            true,
+            'show_datetime' => true,
 
-            'show_order_type' =>
-            false,
+            'show_order_type' => false,
 
-            'show_unit_price' =>
-            true,
+            'show_unit_price' => true,
 
-            'show_tax_breakdown' =>
-            true,
+            'show_tax_breakdown' => true,
 
-            'show_payment_method' =>
-            true,
+            'show_payment_method' => true,
 
-            'show_cash_received' =>
-            true,
+            'show_cash_received' => true,
 
-            'show_change' =>
-            true,
+            'show_change' => true,
 
-            'show_invoice_qr' =>
-            false,
+            'show_invoice_qr' => false,
 
-            'invoice_qr_text' =>
-            'Escanea para solicitar tu factura.',
+            'invoice_qr_text' => 'Escanea para solicitar tu factura.',
 
-            'paper_width_mm' =>
-            80,
+            'paper_width_mm' => 80,
 
-            'auto_print' =>
-            false,
+            'auto_print' => false,
 
-            'copies' =>
-            1,
+            'copies' => 1,
         ];
     }
 }

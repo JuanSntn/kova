@@ -6,7 +6,6 @@ use App\Domain\Tenancy\Actions\CreateTenant;
 use App\Enums\PlanCode;
 use App\Models\Category;
 use App\Models\Plan;
-use App\Models\Product;
 use App\Models\Tax;
 use App\Models\Tenant;
 use App\Models\User;
@@ -130,26 +129,26 @@ class ProductTaxTest extends TestCase
     {
         [, $tenant] = $this->provisionOwner();
 
-        app(CurrentTenant::class)->run($tenant, function () use ($tenant): void {
+        app(CurrentTenant::class)->run($tenant, function (): void {
             $tax = Tax::query()->where('name', 'IVA 16%')->sole();
             $result = app(ProductTaxService::class)->calculateIncludedTax(
                 150,
                 $tax,
             );
 
-            $this->assertSame(129.31, $result['tax_base']);
-            $this->assertSame(20.69, $result['tax_amount']);
-            $this->assertSame(150.00, $result['line_total']);
+            $this->assertSame('129.31', $result['tax_base']);
+            $this->assertSame('20.69', $result['tax_amount']);
+            $this->assertSame('150.00', $result['line_total']);
             $this->assertSame(
                 $result['line_total'],
-                round($result['tax_base'] + $result['tax_amount'], 2),
+                (string) \Brick\Math\BigDecimal::of($result['tax_base'])->plus($result['tax_amount']),
             );
 
             $zero = Tax::query()->where('name', 'IVA 0%')->sole();
             $exempt = Tax::query()->where('factor_type', 'exempt')->sole();
 
-            $this->assertSame(0.0, app(ProductTaxService::class)->calculateIncludedTax(150, $zero)['tax_amount']);
-            $this->assertSame(0.0, app(ProductTaxService::class)->calculateIncludedTax(150, $exempt)['tax_amount']);
+            $this->assertSame('0.00', app(ProductTaxService::class)->calculateIncludedTax(150, $zero)['tax_amount']);
+            $this->assertSame('0.00', app(ProductTaxService::class)->calculateIncludedTax(150, $exempt)['tax_amount']);
         });
     }
 
@@ -168,6 +167,142 @@ class ProductTaxTest extends TestCase
                 'is_active' => false,
             ])
             ->assertUnprocessable();
+    }
+
+    public function test_owner_cannot_create_an_arbitrary_tax_treatment(): void
+    {
+        [$owner, $tenant] = $this->provisionOwner();
+
+        $this->actingAs($owner, 'web')
+            ->withHeader('X-Tenant-ID', $tenant->public_id)
+            ->postJson('/api/settings/taxes', [
+                'name' => 'IVA 8%',
+                'code' => 'iva',
+                'factor_type' => 'rate',
+                'rate' => 8,
+                'is_active' => true,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath(
+                'errors.tax.0',
+                'Kova administra los tratamientos fiscales disponibles. No puedes crear tasas manuales.',
+            );
+
+        $this->assertDatabaseMissing('taxes', [
+            'tenant_id' => $tenant->id,
+            'factor_type' => 'rate',
+            'rate' => '8.0000',
+        ]);
+    }
+
+    public function test_tax_identity_and_rate_cannot_be_modified(): void
+    {
+        [$owner, $tenant] = $this->provisionOwner();
+
+        $zeroTax = app(CurrentTenant::class)->run(
+            $tenant,
+            fn (): Tax => Tax::query()->where('name', 'IVA 0%')->sole(),
+        );
+
+        $this->actingAs($owner, 'web')
+            ->withHeader('X-Tenant-ID', $tenant->public_id)
+            ->putJson("/api/settings/taxes/{$zeroTax->public_id}", [
+                'name' => 'IVA 8%',
+                'rate' => 8,
+                'is_active' => true,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['name', 'rate']);
+
+        $this->assertDatabaseHas('taxes', [
+            'id' => $zeroTax->id,
+            'name' => 'IVA 0%',
+            'rate' => '0.0000',
+        ]);
+    }
+
+    public function test_tax_assigned_to_products_cannot_be_deactivated(): void
+    {
+        [$owner, $tenant] = $this->provisionOwner();
+
+        [, $zeroTax] = app(CurrentTenant::class)->run(
+            $tenant,
+            function () use ($tenant): array {
+                $category = $tenant->categories()->create([
+                    'name' => 'Comida',
+                    'sort_order' => 0,
+                    'is_active' => true,
+                ]);
+
+                $zeroTax = Tax::query()->where('name', 'IVA 0%')->sole();
+
+                $tenant->products()->create([
+                    'category_id' => $category->id,
+                    'tax_id' => $zeroTax->id,
+                    'name' => 'Agua',
+                    'price' => '20.00',
+                    'sort_order' => 0,
+                    'is_active' => true,
+                    'billing_enabled' => true,
+                ]);
+
+                return [$category, $zeroTax];
+            },
+        );
+
+        $this->actingAs($owner, 'web')
+            ->withHeader('X-Tenant-ID', $tenant->public_id)
+            ->putJson("/api/settings/taxes/{$zeroTax->public_id}", [
+                'is_active' => false,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath(
+                'errors.is_active.0',
+                'No puedes desactivar un impuesto que está asignado a productos.',
+            );
+
+        $this->assertTrue($zeroTax->fresh()->is_active);
+    }
+
+    public function test_legacy_custom_taxes_are_not_listed_or_assignable(): void
+    {
+        [$owner, $tenant] = $this->provisionOwner();
+
+        [$category, $customTax] = app(CurrentTenant::class)->run(
+            $tenant,
+            fn (): array => [
+                $tenant->categories()->create([
+                    'name' => 'Comida',
+                    'sort_order' => 0,
+                    'is_active' => true,
+                ]),
+                $tenant->taxes()->create([
+                    'name' => 'IVA 8% manual',
+                    'code' => 'iva',
+                    'factor_type' => 'rate',
+                    'rate' => '8.0000',
+                    'is_active' => true,
+                ]),
+            ],
+        );
+
+        $this->actingAs($owner, 'web')
+            ->withHeader('X-Tenant-ID', $tenant->public_id)
+            ->getJson('/api/settings/taxes')
+            ->assertOk()
+            ->assertJsonCount(3, 'data')
+            ->assertJsonMissing(['id' => $customTax->public_id]);
+
+        $this->actingAs($owner, 'web')
+            ->withHeader('X-Tenant-ID', $tenant->public_id)
+            ->postJson('/api/pos/products', [
+                'category_id' => $category->public_id,
+                'name' => 'Café',
+                'price' => '50.00',
+                'tax_id' => $customTax->public_id,
+                'is_active' => true,
+            ])
+            ->assertNotFound();
     }
 
     /**

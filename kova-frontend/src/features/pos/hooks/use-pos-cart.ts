@@ -10,27 +10,14 @@ import type {
     PosPaymentMethod,
     PosProduct,
 } from '../types'
+import { cents } from '../money'
 
 const MAX_QUANTITY_PER_LINE =
     99
 
-function toNumber(
-    value:
-        | string
-        | number,
-): number {
-    const parsed =
-        Number(value)
-
-    return Number.isFinite(
-        parsed,
-    )
-        ? parsed
-        : 0
-}
-
 function createLineId(
     product: PosProduct,
+    selected: string[],
 ): string {
     /*
      * Free:
@@ -40,16 +27,16 @@ function createLineId(
      * Después podremos incluir
      * modificadores en esta firma.
      */
-    return product.id
+    return [product.id, ...selected.slice().sort()].join(':')
 }
 
-export function usePosCart() {
+export function usePosCart(initialItems: PosCartItem[] = [], initialPayment: PosPaymentMethod = 'cash') {
     const [
         items,
         setItems,
     ] = useState<
         PosCartItem[]
-    >([])
+    >(initialItems)
 
     /*
     |--------------------------------------------------------------------------
@@ -62,7 +49,7 @@ export function usePosCart() {
         setPaymentMethod,
     ] =
         useState<PosPaymentMethod>(
-            'cash',
+            initialPayment,
         )
 
     /*
@@ -76,10 +63,12 @@ export function usePosCart() {
             (
                 product:
                     PosProduct,
+                selected: string[] = [],
             ) => {
                 const lineId =
                     createLineId(
                         product,
+                        selected,
                     )
 
                 setItems(
@@ -127,7 +116,7 @@ export function usePosCart() {
                                     product.id,
 
                                 name_snapshot:
-                                    product.name,
+                                    product.name + (selected.length ? ' · ' + (product.modifier_groups ?? []).flatMap(g => g.options).filter(o => selected.includes(o.id)).map(o => o.name).join(', ') : ''),
 
                                 category_name:
                                     product
@@ -138,15 +127,13 @@ export function usePosCart() {
                                     product.image_path,
 
                                 unit_price:
-                                    toNumber(
-                                        product.price,
-                                    ),
+                                    (cents(product.price) + (product.modifier_groups ?? []).flatMap(g => g.options).filter(o => selected.includes(o.id)).reduce((sum, o) => sum + cents(o.price), 0)) / 100,
 
                                 quantity:
                                     1,
 
                                 modifiers:
-                                    [],
+                                    (product.modifier_groups ?? []).flatMap(g => g.options.filter(o => selected.includes(o.id)).map(o => ({ modifier_option_id: o.id, group_name: g.name, option_name: o.name, price_adjustment: Number(o.price) }))),
 
                                 notes:
                                     null,
@@ -314,12 +301,12 @@ export function usePosCart() {
                     ) =>
                         total +
                         (
-                            item.unit_price *
+                            cents(item.unit_price) *
                             item.quantity
                         ),
 
                     0,
-                )
+                ) / 100
 
             /*
              * Free MVP.
@@ -358,6 +345,7 @@ export function usePosCart() {
         ])
 
     return {
+        setItems,
         items,
 
         itemCount,

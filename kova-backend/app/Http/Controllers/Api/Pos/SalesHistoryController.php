@@ -9,6 +9,8 @@ use App\Http\Resources\Pos\SaleListResource;
 use App\Models\Order;
 use App\Services\Sales\SalesHistoryService;
 use App\Tenancy\CurrentTenant;
+use App\Tenancy\CurrentBranch;
+use App\Services\Branches\BranchAccessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
 
@@ -17,6 +19,8 @@ class SalesHistoryController extends Controller
     public function __construct(
         private readonly CurrentTenant $currentTenant,
         private readonly SalesHistoryService $sales,
+        private readonly CurrentBranch $currentBranch,
+        private readonly BranchAccessService $branchAccess,
     ) {}
 
     public function index(
@@ -33,6 +37,8 @@ class SalesHistoryController extends Controller
                 tenant: $this
                     ->currentTenant
                     ->get(),
+
+                branch: $this->currentBranch->get(),
 
                 filters: $request->validated(),
             );
@@ -76,6 +82,9 @@ class SalesHistoryController extends Controller
             'view',
             $order,
         );
+
+        $order->loadMissing('branch');
+        $this->branchAccess->assertHistory(request()->user(), $this->currentTenant->get(), $order->branch);
 
         return response()->json([
             'data' =>

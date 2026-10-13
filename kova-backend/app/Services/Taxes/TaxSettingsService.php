@@ -2,18 +2,25 @@
 
 namespace App\Services\Taxes;
 
+use App\Models\Tax;
 use App\Models\Tenant;
 use App\Models\TenantTaxSetting;
-use App\Models\Tax;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Validation\ValidationException;
 
 final class TaxSettingsService
 {
+    public function __construct(
+        private readonly TaxTreatmentCatalog $catalog,
+        private readonly TenantTaxProvisioner $provisioner,
+    ) {}
+
     public function list(Tenant $tenant): Collection
     {
-        return $tenant
-            ->taxes()
+        $this->provisioner->provisionDefaults($tenant);
+
+        return $this->catalog
+            ->query($tenant)
             ->orderByDesc('is_active')
             ->orderBy('name')
             ->get();
@@ -21,39 +28,35 @@ final class TaxSettingsService
 
     public function create(Tenant $tenant, array $data): Tax
     {
-        return $tenant
-            ->taxes()
-            ->create(
-                $this->normalizeTaxData($data)
-            );
+        throw ValidationException::withMessages([
+            'tax' => 'Kova administra los tratamientos fiscales disponibles. No puedes crear tasas manuales.',
+        ]);
     }
 
     public function update(Tenant $tenant, Tax $tax, array $data): Tax
     {
-        $attributes = [
-            'name' => $tax->name,
-            'code' => $tax->code,
-            'factor_type' => $tax->factor_type,
-            'rate' => $tax->rate,
-            'is_active' => $tax->is_active,
-        ];
+        $this->catalog->assertSupported($tax);
 
-        foreach ($data as $key => $value) {
-            $attributes[$key] = $value;
-        }
-
-        $attributes = $this->normalizeTaxData($attributes);
+        $isActive = (bool) $data['is_active'];
 
         if (
             $tax->id === $this->setting($tenant)->default_tax_id &&
-            $attributes['is_active'] === false
+            $isActive === false
         ) {
             throw ValidationException::withMessages([
                 'is_active' => 'No puedes desactivar el impuesto predeterminado.',
             ]);
         }
 
-        $tax->update($attributes);
+        if ($isActive === false && $tax->products()->exists()) {
+            throw ValidationException::withMessages([
+                'is_active' => 'No puedes desactivar un impuesto que está asignado a productos.',
+            ]);
+        }
+
+        $tax->update([
+            'is_active' => $isActive,
+        ]);
 
         return $tax->refresh();
     }
@@ -65,27 +68,45 @@ final class TaxSettingsService
             ->with('defaultTax')
             ->first();
 
-        if ($setting) {
-            return $setting;
+        if (! $setting) {
+            $this->provisioner->provisionDefaults($tenant);
+
+            $setting = $tenant
+                ->taxSettings()
+                ->with('defaultTax')
+                ->firstOrFail();
         }
 
-        app(TenantTaxProvisioner::class)->provisionDefaults($tenant);
+        if (
+            ! $this->catalog->supports($setting->defaultTax)
+            || ! $setting->defaultTax->is_active
+        ) {
+            $default = $this->catalog
+                ->query($tenant)
+                ->where('factor_type', 'rate')
+                ->where('rate', '16.0000')
+                ->firstOrFail();
 
-        return $tenant
-            ->taxSettings()
-            ->with('defaultTax')
-            ->firstOrFail();
+            if (! $default->is_active) {
+                $default->update(['is_active' => true]);
+            }
+
+            $setting->update([
+                'default_tax_id' => $default->id,
+                'prices_include_tax' => true,
+            ]);
+
+            return $setting->refresh()->load('defaultTax');
+        }
+
+        return $setting;
     }
 
     public function updateConfig(
         Tenant $tenant,
         string $defaultTaxPublicId,
     ): TenantTaxSetting {
-        $tax = $tenant
-            ->taxes()
-            ->where('public_id', $defaultTaxPublicId)
-            ->where('is_active', true)
-            ->firstOrFail();
+        $tax = $this->catalog->findActive($tenant, $defaultTaxPublicId);
 
         $setting = $this->setting($tenant);
 
@@ -103,24 +124,9 @@ final class TaxSettingsService
         Tenant $tenant,
         string $publicId,
     ): Tax {
-        return $tenant
-            ->taxes()
+        return $this->catalog
+            ->query($tenant)
             ->where('public_id', $publicId)
             ->firstOrFail();
-    }
-
-    private function normalizeTaxData(array $data): array
-    {
-        $factorType = $data['factor_type'];
-
-        return [
-            'name' => trim($data['name']),
-            'code' => trim($data['code']),
-            'factor_type' => $factorType,
-            'rate' => $factorType === 'exempt'
-                ? 0
-                : $data['rate'],
-            'is_active' => $data['is_active'] ?? true,
-        ];
     }
 }

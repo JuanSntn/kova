@@ -2,6 +2,9 @@ import {
     Label,
 } from '@/components/ui/label'
 import {
+    InfoIcon,
+} from 'lucide-react'
+import {
     Select,
     SelectContent,
     SelectItem,
@@ -207,6 +210,20 @@ export function TaxSettingsCard({
                 menú se consideran precios
                 finales con impuestos incluidos.
             </p>
+
+            <div className="flex max-w-3xl gap-2.5 rounded-md border bg-muted/20 px-3 py-2.5">
+                <InfoIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+
+                <div className="space-y-0.5 text-xs">
+                    <p className="font-medium">
+                        IVA fronterizo
+                    </p>
+
+                    <p className="text-muted-foreground">
+                        El IVA 8% no se configura manualmente. Kova lo determinará cuando la sucursal, la clave del producto y la autorización fiscal del emisor cumplan todos los requisitos. Mientras esa autorización no esté disponible, los productos con IVA general conservarán la tasa de 16%.
+                    </p>
+                </div>
+            </div>
         </section>
     )
 }

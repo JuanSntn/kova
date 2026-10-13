@@ -9,10 +9,17 @@ use App\Models\Product;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Services\Plans\PlanLimitService;
+use App\Services\Subscriptions\CapacityService;
+use App\Services\Subscriptions\CatalogAccessService;
 use App\Services\Taxes\ProductTaxService;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 use App\Services\Tickets\TicketSettingsService;
+use App\Services\Fiscal\FiscalTicketService;
+use App\Services\Branches\BranchProductService;
+use App\Tenancy\CurrentBranch;
+use Illuminate\Support\Facades\DB;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
+use Illuminate\Validation\ValidationException;
 
 final class OrderService
 {
@@ -20,6 +27,10 @@ final class OrderService
         private readonly ProductTaxService $taxes,
         private readonly PlanLimitService $limits,
         private readonly TicketSettingsService $ticketSettings,
+        private readonly CatalogAccessService $catalogAccess,
+        private readonly FiscalTicketService $fiscalTickets,
+        private readonly BranchProductService $branchProducts,
+        private readonly CurrentBranch $currentBranch,
     ) {}
 
     public function checkout(
@@ -38,202 +49,18 @@ final class OrderService
         |--------------------------------------------------------------------------
         */
 
-            $branch = $this->resolveSingleActiveBranch(
-                $tenant
-            );
+            Tenant::whereKey($tenant->id)->lockForUpdate()->firstOrFail();
+            app(CapacityService::class)->assertFeature($tenant, 'allows_counter_orders');
+            $branch = $this->currentBranch->get();
 
-            /*
-        |--------------------------------------------------------------------------
-        | Impuesto predeterminado
-        |--------------------------------------------------------------------------
-        */
-
-            $defaultTax = $this->taxes->defaultTax(
-                $tenant
-            );
-
-            /*
-        |--------------------------------------------------------------------------
-        | Items recibidos
-        |--------------------------------------------------------------------------
-        */
-
-            $items = collect(
-                $data['items']
-            );
-
-            $productIds = $items
-                ->pluck('product_id')
-                ->unique()
-                ->values();
-
-            /*
-        |--------------------------------------------------------------------------
-        | Productos reales del tenant
-        |--------------------------------------------------------------------------
-        |
-        | Nunca confiamos en precios enviados por frontend.
-        |
-        */
-
-            $products = $tenant
-                ->products()
-                ->with('tax')
-                ->whereIn(
-                    'public_id',
-                    $productIds
-                )
-                ->where(
-                    'is_active',
-                    true
-                )
-                ->get()
-                ->keyBy(
-                    'public_id'
-                );
-
-            /*
-        |--------------------------------------------------------------------------
-        | Validar productos
-        |--------------------------------------------------------------------------
-        */
-
-            if (
-                $products->count() !==
-                $productIds->count()
-            ) {
-                throw ValidationException::withMessages([
-                    'items' =>
-                    'Uno o más productos no están disponibles.',
-                ]);
+            $calculation = app(OrderCalculator::class)->calculate($tenant, $branch, $data['items']);
+            if (isset($data['quote_token'])) {
+                app(CheckoutQuoteService::class)->verify($data['quote_token'], $tenant, $branch, $user, $data['items'], $calculation);
             }
-
-            /*
-        |--------------------------------------------------------------------------
-        | Construir snapshots
-        |--------------------------------------------------------------------------
-        */
-
-            $lineSnapshots = [];
-
-            foreach ($items as $item) {
-                /** @var Product $product */
-                $product = $products->get(
-                    $item['product_id']
-                );
-
-                $quantity = (int) $item['quantity'];
-
-                /*
-             * Precio oficial desde BD.
-             */
-                $unitPrice = $this->money(
-                    (float) $product->price
-                );
-
-                /*
-             * Total bruto de la línea.
-             *
-             * El precio ya incluye impuestos.
-             */
-                $lineTotal = $this->money(
-                    $unitPrice *
-                        $quantity
-                );
-
-                /*
-             * Impuesto efectivo:
-             *
-             * producto.tax_id
-             * o
-             * impuesto predeterminado.
-             */
-                $tax = $this->taxes
-                    ->resolveEffectiveTax(
-                        $product,
-                        $defaultTax,
-                    );
-
-                /*
-             * Desglose del impuesto incluido.
-             */
-                $taxBreakdown = $this->taxes
-                    ->calculateIncludedTax(
-                        $lineTotal,
-                        $tax,
-                    );
-
-                /*
-             * Snapshot histórico.
-             */
-                $lineSnapshots[] = [
-                    'product_id' =>
-                    $product->id,
-
-                    'product_name_snapshot' =>
-                    $product->name,
-
-                    'unit_price_snapshot' =>
-                    $unitPrice,
-
-                    'quantity' =>
-                    $quantity,
-
-                    'tax_name_snapshot' =>
-                    $tax->name,
-
-                    'tax_code_snapshot' =>
-                    $tax->code,
-
-                    'tax_factor_type_snapshot' =>
-                    $tax->factor_type,
-
-                    'tax_rate_snapshot' =>
-                    $tax->rate,
-
-                    'tax_base' =>
-                    $taxBreakdown['tax_base'],
-
-                    'tax_amount' =>
-                    $taxBreakdown['tax_amount'],
-
-                    'line_total' =>
-                    $taxBreakdown['line_total'],
-                ];
-            }
-
-            /*
-        |--------------------------------------------------------------------------
-        | Totales
-        |--------------------------------------------------------------------------
-        */
-
-            $subtotal = $this->money(
-                array_sum(
-                    array_column(
-                        $lineSnapshots,
-                        'line_total'
-                    )
-                )
-            );
-
-            $taxBaseTotal = $this->money(
-                array_sum(
-                    array_column(
-                        $lineSnapshots,
-                        'tax_base'
-                    )
-                )
-            );
-
-            $taxTotal = $this->money(
-                array_sum(
-                    array_column(
-                        $lineSnapshots,
-                        'tax_amount'
-                    )
-                )
-            );
+            $lineSnapshots = $calculation['lines'];
+            $subtotal = $calculation['subtotal'];
+            $taxBaseTotal = $calculation['tax_base_total'];
+            $taxTotal = $calculation['tax_total'];
 
             /*
          * Por ahora:
@@ -264,7 +91,7 @@ final class OrderService
              * amount_received para efectivo.
              */
                 $amountReceived = $this->money(
-                    (float) $data['amount_received']
+                    (string) $data['amount_received']
                 );
 
                 /*
@@ -274,8 +101,7 @@ final class OrderService
              * Laravel es la autoridad.
              */
                 if (
-                    $amountReceived <
-                    $total
+                    BigDecimal::of($amountReceived)->isLessThan($total)
                 ) {
                     throw new DomainConflictException(
                         'El efectivo recibido es menor al total de la venta.',
@@ -288,8 +114,7 @@ final class OrderService
              * en backend.
              */
                 $changeAmount = $this->money(
-                    $amountReceived -
-                        $total
+                    (string) BigDecimal::of($amountReceived)->minus($total)
                 );
             }
 
@@ -325,57 +150,41 @@ final class OrderService
             $order = $tenant
                 ->orders()
                 ->create([
-                    'branch_id' =>
-                    $branch->id,
+                    'branch_id' => $branch->id,
 
                     /*
                  * Se genera después usando
                  * $order->id.
                  */
-                    'folio' =>
-                    null,
+                    'folio' => null,
 
-                    'order_type' =>
-                    'counter',
+                    'order_type' => 'counter',
 
-                    'status' =>
-                    'paid',
+                    'status' => 'paid',
 
-                    'subtotal' =>
-                    $subtotal,
+                    'subtotal' => $subtotal,
 
-                    'tax_base_total' =>
-                    $taxBaseTotal,
+                    'tax_base_total' => $taxBaseTotal,
 
-                    'tax_total' =>
-                    $taxTotal,
+                    'tax_total' => $taxTotal,
 
-                    'discount_total' =>
-                    0,
+                    'discount_total' => 0,
 
-                    'service_charge_total' =>
-                    0,
+                    'service_charge_total' => 0,
 
-                    'tip_total' =>
-                    0,
+                    'tip_total' => 0,
 
-                    'total' =>
-                    $total,
+                    'total' => $total,
 
-                    'payment_method' =>
-                    $data['payment_method'],
+                    'payment_method' => $data['payment_method'],
 
-                    'amount_received' =>
-                    $amountReceived,
+                    'amount_received' => $amountReceived,
 
-                    'change_amount' =>
-                    $changeAmount,
+                    'change_amount' => $changeAmount,
 
-                    'paid_at' =>
-                    now(),
+                    'paid_at' => now(),
 
-                    'created_by' =>
-                    $user->id,
+                    'created_by' => $user->id,
                 ]);
 
             /*
@@ -394,10 +203,9 @@ final class OrderService
         */
 
             $order->update([
-                'folio' =>
-                $this->generateFolio(
+                'folio' => $this->generateFolio(
                     tenant: $tenant,
-
+                    branch: $branch,
                     orderId: $order->id,
                 ),
             ]);
@@ -409,8 +217,7 @@ final class OrderService
         */
 
             foreach (
-                $lineSnapshots
-                as $snapshot
+                $lineSnapshots as $snapshot
             ) {
                 $order
                     ->items()
@@ -418,6 +225,12 @@ final class OrderService
                         $snapshot
                     );
             }
+
+            app(\App\Services\Cash\CashService::class)->attachSale($tenant, $branch, $user, $order);
+
+            app(\App\Services\Inventory\InventoryLedgerService::class)->consumeOrder($tenant, $branch, $order);
+
+            $this->fiscalTickets->issueForSale($tenant, $order);
 
             /*
         |--------------------------------------------------------------------------
@@ -434,32 +247,16 @@ final class OrderService
         });
     }
 
-    private function resolveSingleActiveBranch(Tenant $tenant): Branch
-    {
-        $branches = $tenant
-            ->branches()
-            ->where('is_active', true)
-            ->get();
-
-        if ($branches->count() !== 1) {
-            throw new DomainConflictException(
-                'El POS Free requiere exactamente una sucursal activa.',
-                'POS_BRANCH_NOT_RESOLVED',
-            );
-        }
-
-        return $branches->sole();
-    }
-
     private function generateFolio(
         Tenant $tenant,
+        Branch $branch,
         int $orderId,
     ): string {
         $prefix = $this
             ->ticketSettings
-            ->prefix($tenant);
+            ->prefix($tenant, $branch);
 
-        return $prefix . '-' . str_pad(
+        return $prefix.'-'.str_pad(
             (string) $orderId,
             6,
             '0',
@@ -467,8 +264,8 @@ final class OrderService
         );
     }
 
-    private function money(float $amount): float
+    private function money(string|int $amount): string
     {
-        return round($amount, 2);
+        return (string) BigDecimal::of($amount)->toScale(2, RoundingMode::HalfUp);
     }
 }

@@ -1,13 +1,16 @@
 // src/features/menu/menu-page.tsx
 
 import { useState } from 'react'
+import { SectionNav, SectionNavButton } from '@/components/layout/section-nav'
 
 import { CategoriesTab } from '@/features/products/categories-tab'
 import { ProductsPage } from '@/features/products/products-page'
+import { ModifiersPage } from '@/features/modifiers/modifiers-page'
 
 type MenuView =
     | 'products'
     | 'categories'
+    | 'modifiers'
 
 export function MenuPage() {
     const [view, setView] =
@@ -15,67 +18,34 @@ export function MenuPage() {
 
     return (
         <>
-            <nav
-                aria-label="Secciones del menú"
-                className="-mb-px flex gap-5 border-b"
-            >
-                <MenuNavButton
+            <SectionNav label="Secciones del menú">
+                <SectionNavButton
                     active={view === 'products'}
                     onClick={() =>
                         setView('products')
                     }
                 >
                     Productos
-                </MenuNavButton>
+                </SectionNavButton>
 
-                <MenuNavButton
+                <SectionNavButton
                     active={view === 'categories'}
                     onClick={() =>
                         setView('categories')
                     }
                 >
                     Categorías
-                </MenuNavButton>
-            </nav>
+            </SectionNavButton>
+                <SectionNavButton active={view === 'modifiers'} onClick={() => setView('modifiers')}>Modificadores</SectionNavButton>
+            </SectionNav>
 
             <div className="space-y-3">
                 {view === 'products' ? (
                     <ProductsPage />
-                ) : (
+                ) : view === 'modifiers' ? <ModifiersPage /> : (
                     <CategoriesTab />
                 )}
             </div>
         </>
-    )
-}
-
-function MenuNavButton({
-    active,
-    children,
-    onClick,
-}: {
-    active: boolean
-    children: React.ReactNode
-    onClick: () => void
-}) {
-    return (
-        <button
-            type="button"
-            aria-current={
-                active
-                    ? 'page'
-                    : undefined
-            }
-            className={[
-                'border-b-2 px-0 py-2.5 text-xs font-medium transition-colors',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                active
-                    ? 'border-primary text-foreground'
-                    : 'border-transparent text-muted-foreground hover:text-foreground',
-            ].join(' ')}
-            onClick={onClick}
-        >
-            {children}
-        </button>
     )
 }

@@ -1,9 +1,9 @@
 import { api } from '@/lib/api'
 
 import type {
+    CheckoutContext,
+    CheckoutQuote,
     PosCategory,
-    PosCheckoutPayload,
-    PosOrder,
     PosProductsResponse,
 } from './types'
 
@@ -24,7 +24,7 @@ export async function getPosCategories(): Promise<
         await api.get<
             DataResponse<PosCategory[]>
         >(
-            '/api/pos/categories',
+            '/api/pos/catalog/categories',
         )
 
     return response.data.data
@@ -43,7 +43,7 @@ export async function getPosProducts(): Promise<
         await api.get<
             PosProductsResponse
         >(
-            '/api/pos/products',
+            '/api/pos/catalog/products',
         )
 
     return response.data
@@ -63,14 +63,27 @@ import type {
 
 export async function createPosOrder(
     payload: CreatePosOrderPayload,
+    key: string,
+    context: CheckoutContext,
 ): Promise<PosCreatedOrder> {
     const response =
         await api.post<PosOrderResponse>(
             '/api/pos/orders',
             payload,
+            { headers: checkoutHeaders(context, key), timeout: 20000 },
         )
 
     return response.data.data
 }
 
+function checkoutHeaders(context: CheckoutContext, key?: string) {
+    return { 'X-Tenant-ID': context.tenant, 'X-Branch-ID': context.branch, ...(key ? { 'Idempotency-Key': key } : {}) }
+}
 
+export async function quotePosOrder(items: CreatePosOrderPayload['items'], context: CheckoutContext): Promise<CheckoutQuote> {
+    return (await api.post('/api/pos/checkout/quote', { items }, { headers: checkoutHeaders(context), timeout: 20000 })).data.data
+}
+
+export async function recoverPosOrder(key: string, context: CheckoutContext): Promise<PosCreatedOrder> {
+    return (await api.get('/api/pos/checkouts/' + key, { headers: checkoutHeaders(context), timeout: 20000 })).data.data
+}

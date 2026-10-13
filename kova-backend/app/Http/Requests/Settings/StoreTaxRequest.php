@@ -4,6 +4,7 @@ namespace App\Http\Requests\Settings;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 class StoreTaxRequest extends FormRequest
 {
@@ -47,6 +48,23 @@ class StoreTaxRequest extends FormRequest
                 'sometimes',
                 'boolean',
             ],
+        ];
+    }
+
+    /**
+     * @return list<callable(Validator): void>
+     */
+    public function after(): array
+    {
+        return [
+            static function (Validator $validator): void {
+                if ($validator->errors()->isEmpty()) {
+                    $validator->errors()->add(
+                        'tax',
+                        'Kova administra los tratamientos fiscales disponibles. No puedes crear tasas manuales.',
+                    );
+                }
+            },
         ];
     }
 }

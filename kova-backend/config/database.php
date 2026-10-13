@@ -5,6 +5,11 @@ use Pdo\Mysql;
 
 return [
 
+    'allow_destructive_commands' => (bool) env(
+        'DB_ALLOW_DESTRUCTIVE_COMMANDS',
+        false,
+    ),
+
     /*
     |--------------------------------------------------------------------------
     | Default Database Connection Name

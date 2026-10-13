@@ -2,8 +2,10 @@
 
 namespace App\Http\Requests\Pos;
 
+use App\Services\Fiscal\SatCatalogService;
 use App\Tenancy\CurrentTenant;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Validator;
 
 class UpdateProductRequest extends FormRequest
@@ -16,6 +18,19 @@ class UpdateProductRequest extends FormRequest
     public function rules(): array
     {
         return [
+            // El tenant, la sucursal y las capacidades del plan siempre se
+            // resuelven en el servidor. Nunca se aceptan desde el cliente.
+            'id' => ['prohibited'],
+            'public_id' => ['prohibited'],
+            'tenant_id' => ['prohibited'],
+            'branch_id' => ['prohibited'],
+            'user_id' => ['prohibited'],
+            'billing_enabled' => ['prohibited'],
+            'locked_by_plan' => ['prohibited'],
+            'can_edit' => ['prohibited'],
+            'can_delete' => ['prohibited'],
+            'can_use' => ['prohibited'],
+
             'category_id' => [
                 'sometimes',
                 'required',
@@ -80,6 +95,10 @@ class UpdateProductRequest extends FormRequest
                 'sometimes',
                 'boolean',
             ],
+            'preparation_station' => ['sometimes', 'required', 'string', 'in:kitchen,bar,none'],
+            'sat_product_service_code' => ['sometimes', 'nullable', 'digits:8'],
+            'sat_unit_code' => ['sometimes', 'nullable', 'string', 'max:30'],
+            'sat_tax_object_code' => ['sometimes', 'nullable', 'string', 'max:30'],
         ];
     }
 
@@ -92,6 +111,19 @@ class UpdateProductRequest extends FormRequest
     public function withValidator(
         Validator $validator
     ): void {
+        $validator->after(function (Validator $validator): void {
+            if ($validator->errors()->isEmpty()) {
+                try {
+                    app(SatCatalogService::class)->assertProduct($this->only(['sat_product_service_code', 'sat_unit_code', 'sat_tax_object_code']));
+                } catch (ValidationException $e) {
+                    foreach ($e->errors() as $field => $messages) {
+                        foreach ($messages as $message) {
+                            $validator->errors()->add($field, $message);
+                        }
+                    }
+                }
+            }
+        });
         $validator->after(
             function (
                 Validator $validator

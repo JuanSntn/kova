@@ -1,3 +1,4 @@
+import { ProductInventory } from '@/features/inventory/product-inventory'
 import {
     ImageIcon,
     UploadIcon,
@@ -10,8 +11,10 @@ import {
     type ChangeEvent,
     type FormEvent,
 } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 import { Button } from '@/components/ui/button'
+import { CatalogCombobox } from '@/components/ui/catalog-combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -46,6 +49,7 @@ import type {
 import type {
     Tax,
 } from '@/features/settings/taxes/types'
+import { getTaxObjects, searchProductServices, searchUnits } from '@/features/fiscal/sat-catalog-api'
 
 type ProductFormProps = {
     open: boolean
@@ -96,6 +100,13 @@ export function ProductForm({
         taxId,
         setTaxId,
     ] = useState('default')
+
+    const [preparationStation, setPreparationStation] = useState<'kitchen' | 'bar' | 'none'>('kitchen')
+
+    const [satProductServiceCode, setSatProductServiceCode] = useState('')
+    const [satUnitCode, setSatUnitCode] = useState('')
+    const [satTaxObjectCode, setSatTaxObjectCode] = useState('')
+    const taxObjects = useQuery({ queryKey: ['sat-tax-objects'], queryFn: getTaxObjects, retry: false })
 
     const [
         price,
@@ -164,7 +175,7 @@ export function ProductForm({
         useMemo(() => {
             return categories.filter(
                 (category) =>
-                    category.is_active ||
+                    category.can_use ||
                     category.id ===
                     product?.category.id,
             )
@@ -182,6 +193,7 @@ export function ProductForm({
             return
         }
 
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setName(
             product?.name ?? '',
         )
@@ -199,6 +211,12 @@ export function ProductForm({
                 ? product.tax.id
                 : 'default',
         )
+
+        setPreparationStation(product?.preparation_station ?? 'kitchen')
+
+        setSatProductServiceCode(product?.fiscal.product_service_code ?? '')
+        setSatUnitCode(product?.fiscal.unit_code ?? '')
+        setSatTaxObjectCode(product?.fiscal.tax_object_code ?? '')
 
         setPrice(
             product?.price
@@ -435,6 +453,12 @@ export function ProductForm({
 
             is_active:
                 isActive,
+
+            preparation_station: preparationStation,
+
+            sat_product_service_code: satProductServiceCode.trim() || null,
+            sat_unit_code: satUnitCode || null,
+            sat_tax_object_code: satTaxObjectCode || null,
         }
 
         if (isEditing) {
@@ -519,7 +543,7 @@ export function ProductForm({
                         </SheetDescription>
                     </SheetHeader>
 
-                    <div className="flex-1 space-y-6 overflow-y-auto px-4 py-6">
+                    <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-6">
 
 
 
@@ -603,6 +627,65 @@ export function ProductForm({
                                 </SelectContent>
                             </Select>
                         </div>
+
+                        <div className="space-y-2">
+                            <Label>Área de preparación</Label>
+                            <Select
+                                value={preparationStation}
+                                disabled={saving}
+                                onValueChange={(value) => setPreparationStation(value as 'kitchen' | 'bar' | 'none')}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="kitchen">Cocina</SelectItem>
+                                    <SelectItem value="bar">Barra</SelectItem>
+                                    <SelectItem value="none">Sin preparación</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs leading-5 text-muted-foreground">
+                                Al cobrar, Kova enviará este producto a la comanda del área seleccionada.
+                            </p>
+                        </div>
+
+                        <details className="group rounded-lg border bg-muted/20">
+                            <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium marker:hidden">
+                                Datos fiscales del producto
+                                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                                    Opcional
+                                </span>
+                            </summary>
+
+                            <div className="grid gap-4 border-t px-4 py-4 sm:grid-cols-2">
+                                <div className="space-y-2 sm:col-span-2">
+                                    <Label htmlFor="sat-product-service-code">
+                                        Clave de producto o servicio SAT
+                                    </Label>
+                                    <CatalogCombobox value={satProductServiceCode} disabled={saving} allowEmpty placeholder="Buscar clave o descripción…" search={searchProductServices} onValueChange={setSatProductServiceCode} />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label>Clave de unidad SAT</Label>
+                                    <CatalogCombobox value={satUnitCode} label={product?.fiscal.unit_code === satUnitCode ? product.fiscal.unit_name : null} disabled={saving} allowEmpty placeholder="Buscar unidad…" search={searchUnits} onValueChange={setSatUnitCode} />
+                                </div>
+
+                                <div className="space-y-2 sm:col-span-2">
+                                    <Label>Objeto de impuesto SAT</Label>
+                                    <Select value={satTaxObjectCode || 'default'} disabled={saving} onValueChange={(value) => setSatTaxObjectCode(value === 'default' ? '' : value)}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="default">Usar predeterminado</SelectItem>
+                                            {taxObjects.data?.data.map((entry) => <SelectItem key={entry.code} value={entry.code}>{entry.code} · {entry.description}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
+                                    Si dejas estos campos vacíos, Kova utilizará los valores configurados en Facturación fiscal.
+                                </p>
+                            </div>
+                        </details>
 
                         {/*
                         |--------------------------------------------------------------------------
@@ -946,6 +1029,7 @@ export function ProductForm({
                                 {error}
                             </div>
                         )}
+                        {product && <ProductInventory productId={product.id} />}
                     </div>
 
                     <SheetFooter className="border-t px-4 py-4">

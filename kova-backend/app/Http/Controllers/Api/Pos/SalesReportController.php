@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Services\Sales\SalesReportService;
 use App\Tenancy\CurrentTenant;
+use App\Tenancy\CurrentBranch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
 
@@ -15,6 +16,7 @@ class SalesReportController extends Controller
     public function __construct(
         private readonly CurrentTenant $currentTenant,
         private readonly SalesReportService $reports,
+        private readonly CurrentBranch $currentBranch,
     ) {}
 
     public function summary(): JsonResponse
@@ -30,7 +32,8 @@ class SalesReportController extends Controller
                 ->summary(
                     $this
                         ->currentTenant
-                        ->get()
+                        ->get(),
+                    $this->currentBranch->get(),
                 );
         } catch (
             DomainConflictException $exception

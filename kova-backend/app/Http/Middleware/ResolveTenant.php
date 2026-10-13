@@ -6,9 +6,11 @@ use App\Enums\MembershipStatus;
 use App\Enums\TenantStatus;
 use App\Models\Membership;
 use App\Models\Tenant;
+use App\Services\Subscriptions\EntitlementService;
 use App\Tenancy\CurrentTenant;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -47,6 +49,24 @@ class ResolveTenant
             ->unsetRelation('permissions');
 
         try {
+            if (! $request->isMethodSafe()
+                && ! $request->is('api/billing*')
+                && ! $request->is('api/settings/users*')
+                && ! $request->is('api/cash/*')
+                && ! $request->is('api/inventory/*')
+                && ! $request->is('api/pos/modifiers*', 'api/pos/products/*/modifiers')
+                // POS confirmation owns its write transaction. A prior read
+                // transaction cannot be upgraded safely under SQLite contention.
+                // Completed replays must also remain readable after a downgrade.
+                && ! $request->is('api/pos/orders', 'api/pos/checkout/quote')) {
+                return DB::transaction(function () use ($request, $next, $tenant) {
+                    Tenant::whereKey($tenant->id)->lockForUpdate()->firstOrFail();
+                    app(EntitlementService::class)->assertWritable($tenant);
+
+                    return $next($request);
+                });
+            }
+
             return $next($request);
         } finally {
             $request->user()

@@ -1,4 +1,9 @@
-import { ChevronsUpDownIcon, LogOutIcon } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import {
+  ChevronsUpDownIcon,
+  CreditCardIcon,
+  LogOutIcon,
+} from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
@@ -27,13 +32,17 @@ function initials(name: string) {
 }
 
 export function NavUser({
+  canAccessBilling,
   onLogout,
+  tenantSlug,
   user,
 }: {
+  canAccessBilling: boolean
   onLogout: () => void
+  tenantSlug: string
   user: {
     name: string
-    email: string
+    email: string | null
   }
 }) {
   const { isMobile } = useSidebar()
@@ -53,7 +62,7 @@ export function NavUser({
               </Avatar>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">{user.name}</span>
-                <span className="truncate text-xs">{user.email}</span>
+                <span className="truncate text-xs">{user.email ?? 'Cuenta del equipo'}</span>
               </div>
               <ChevronsUpDownIcon className="ml-auto size-4" />
             </SidebarMenuButton>
@@ -71,13 +80,35 @@ export function NavUser({
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">{user.name}</span>
-                  <span className="truncate text-xs">{user.email}</span>
+                  <span className="truncate text-xs">{user.email ?? 'Cuenta del equipo'}</span>
                 </div>
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+
+            {canAccessBilling ? (
+              <>
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/$tenantSlug/billing"
+                    params={{ tenantSlug }}
+                    search={{
+                      change: undefined,
+                      checkout: undefined,
+                      view: 'details',
+                    }}
+                  >
+                    <CreditCardIcon aria-hidden />
+                    Suscripción y planes
+                  </Link>
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
+
             <DropdownMenuItem onSelect={onLogout}>
-              <LogOutIcon />
+              <LogOutIcon aria-hidden />
               Cerrar sesión
             </DropdownMenuItem>
           </DropdownMenuContent>

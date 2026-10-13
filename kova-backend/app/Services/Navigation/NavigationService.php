@@ -4,6 +4,8 @@ namespace App\Services\Navigation;
 
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Subscriptions\EntitlementService;
+use App\Tenancy\CurrentTenant;
 use Illuminate\Support\Collection;
 
 final class NavigationService
@@ -52,8 +54,7 @@ final class NavigationService
              * No mandar secciones vacías.
              */
             ->filter(
-                fn(array $section): bool =>
-                $section['items'] !== []
+                fn (array $section): bool => $section['items'] !== []
             )
 
             ->values()
@@ -69,7 +70,7 @@ final class NavigationService
      * ├── Productos
      * └── Categorías
      *
-     * @param Collection<int, array<string, mixed>> $items
+     * @param  Collection<int, array<string, mixed>>  $items
      * @return array<int, array<string, mixed>>
      */
     private function visibleItems(
@@ -84,8 +85,7 @@ final class NavigationService
              * del propio módulo.
              */
             ->filter(
-                fn(array $item): bool =>
-                $this->userCanAccessItem(
+                fn (array $item): bool => $this->userCanAccessItem(
                     user: $user,
                     item: $item,
                 )
@@ -173,12 +173,26 @@ final class NavigationService
     }
 
     /**
-     * @param array<string, mixed> $item
+     * @param  array<string, mixed>  $item
      */
     private function userCanAccessItem(
         User $user,
         array $item,
     ): bool {
+        $context = app(CurrentTenant::class);
+        if (($item['key'] ?? null) === 'cash') {
+            if (! $context->isResolved() || ! $user->can('cash.view')) { return false; }
+            $tenant = $context->get();
+            $branches = app(\App\Services\Branches\BranchAccessService::class)->historicalBranchIds($user, $tenant, 'cash.view');
+            $history = \Illuminate\Support\Facades\DB::table('cash_shifts')->where('tenant_id', $tenant->id)->whereIn('branch_id', $branches);
+            if (! $user->can('cash.manage')) { $history->where('responsible_user_id', $user->id); }
+            return app(EntitlementService::class)->allowsCash($tenant) || $history->exists();
+        }
+        $feature = $item['feature'] ?? null;
+        if ($feature && (! $context->isResolved() || ! app(EntitlementService::class)->allows($context->get(), $feature))) {
+            return false;
+        }
+
         $permission =
             $item['permission'] ?? null;
 

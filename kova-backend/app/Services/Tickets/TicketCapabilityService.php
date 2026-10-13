@@ -2,14 +2,13 @@
 
 namespace App\Services\Tickets;
 
-use App\Enums\PlanCode;
 use App\Models\Tenant;
-use App\Services\Plans\TenantPlanService;
+use App\Services\Subscriptions\EntitlementService;
 
 final class TicketCapabilityService
 {
     public function __construct(
-        private readonly TenantPlanService $plans,
+        private readonly EntitlementService $entitlements,
     ) {}
 
     /**
@@ -18,75 +17,36 @@ final class TicketCapabilityService
     public function for(
         Tenant $tenant,
     ): array {
-        $plan =
-            $this->plans
-            ->current(
-                $tenant
+        $canInvoice =
+            $this->entitlements->allows(
+                $tenant,
+                'allows_invoicing',
             );
 
-        $code =
-            $plan->code
-            instanceof PlanCode
-            ? $plan->code
-            : PlanCode::from(
-                (string) $plan->code
+        $allowsTableOrders =
+            $this->entitlements->allows(
+                $tenant,
+                'allows_table_orders',
             );
-
-        $isPaid =
-            in_array(
-                $code,
-                [
-                    PlanCode::Business,
-                    PlanCode::Restaurant,
-                ],
-                true,
-            );
-
-        $isRestaurant =
-            $code ===
-            PlanCode::Restaurant;
 
         return [
-            /*
-            |--------------------------------------------------------------------------
-            | Business
-            |--------------------------------------------------------------------------
-            */
-
             'logo' => true,
             'business_name' => true,
             'phone' => true,
             'email' => true,
 
-            /*
-             * Plan Free no necesita
-             * datos de sucursal impresos.
-             */
             'branch_name' =>
-            $isPaid,
+            $canInvoice,
 
             'address' =>
-            $isPaid,
-
-            /*
-            |--------------------------------------------------------------------------
-            | Sale
-            |--------------------------------------------------------------------------
-            */
+            $canInvoice,
 
             'cashier' => true,
             'folio' => true,
             'datetime' => true,
 
-            /*
-             * Free y Business solo
-             * trabajan Mostrador.
-             *
-             * Restaurante sí puede
-             * tener Mesa + Mostrador.
-             */
             'order_type' =>
-            $isRestaurant,
+            $allowsTableOrders,
 
             'unit_price' => true,
             'tax_breakdown' => true,
@@ -94,23 +54,11 @@ final class TicketCapabilityService
             'cash_received' => true,
             'change' => true,
 
-            /*
-            |--------------------------------------------------------------------------
-            | Fiscal
-            |--------------------------------------------------------------------------
-            */
-
             'rfc' =>
-            $isPaid,
+            $canInvoice,
 
             'invoice_qr' =>
-            $isPaid,
-
-            /*
-            |--------------------------------------------------------------------------
-            | Other
-            |--------------------------------------------------------------------------
-            */
+            $canInvoice,
 
             'custom_texts' => true,
             'printing' => true,

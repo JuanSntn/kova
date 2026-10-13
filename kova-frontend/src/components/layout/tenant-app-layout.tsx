@@ -5,6 +5,7 @@ import { useSession } from '@/features/auth/session-context'
 import { useParams } from '@tanstack/react-router'
 import { TenantLoadingScreen } from '@/components/feedback/tenant-loading-screen'
 import { AppLayout } from '@/components/layout/app-layout'
+import { checkoutContextLocked, pendingCheckoutContext } from '@/features/pos/checkout-storage'
 
 export function TenantAppLayout() {
   const { tenantSlug } = useParams({ strict: false })
@@ -42,6 +43,14 @@ export function TenantAppLayout() {
   }
 
   if (!isTenantReady) {
+    const pending = pendingCheckoutContext()
+    const original = session?.tenants.find(tenant => tenant.id === pending?.tenant)
+    if (checkoutContextLocked() && original) {
+      return <div className="p-6" role="alert">
+        <p>Verifica la venta pendiente antes de cambiar de negocio.</p>
+        <a className="underline" href={`/${original.slug}/pos`}>Volver al punto de venta</a>
+      </div>
+    }
     return <TenantLoadingScreen />
   }
 

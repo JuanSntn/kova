@@ -33,11 +33,15 @@ import { queryKeys } from '@/lib/query-keys'
 
 import {
     deleteCategory,
-    getCategories,
+    getCategoriesWithMeta,
 } from './api'
 import { CategoryForm } from './category-form'
+import { CategoryUsageCard } from './components/category-usage-card'
 
-import type { Category } from './types'
+import type {
+    CategoriesResponse,
+    Category,
+} from './types'
 
 export function CategoriesTab() {
     const { activeTenant } = useSession()
@@ -67,31 +71,54 @@ export function CategoriesTab() {
     ] = useState<string | null>(null)
 
     const {
-        data: categories = [],
+        data: categoriesResult,
         isPending,
         error: queryError,
     } = useQuery({
         queryKey:
-            queryKeys.categories(
+            queryKeys.categoryCatalog(
                 tenantId,
             ),
 
         queryFn:
-            getCategories,
+            getCategoriesWithMeta,
 
         enabled:
             Boolean(tenantId),
 
         /*
-         * Durante 5 minutos consideramos
-         * las categorías actualizadas.
-         *
-         * Si ProductsPage utiliza esta misma
-         * queryKey, no volverá a consultarlas.
+         * Esta caché conserva también el plan
+         * y el uso; las listas simples de POS
+         * utilizan una clave independiente.
          */
         staleTime:
             5 * 60 * 1000,
     })
+
+    const categories =
+        categoriesResult?.data ?? []
+
+    const plan =
+        categoriesResult?.meta?.plan ??
+        null
+
+    const usage =
+        categoriesResult?.meta?.usage ??
+        null
+
+    const hasLockedCategories =
+        categories.some(
+            (category) =>
+                category.locked_by_plan,
+        )
+
+    const limitReached =
+        usage?.limit_reached ??
+        false
+
+    const canCreateCategory =
+        !limitReached &&
+        !hasLockedCategories
 
     function handleCreate() {
         setActionError(null)
@@ -138,19 +165,33 @@ export function CategoriesTab() {
              * Eliminamos la categoría
              * directamente de la caché.
              */
-            queryClient.setQueryData<
-                Category[]
-            >(
-                queryKeys.categories(
+            queryClient.setQueryData<CategoriesResponse>(
+                queryKeys.categoryCatalog(
                     tenantId,
                 ),
-                (current = []) =>
-                    current.filter(
-                        (item) =>
-                            item.id !==
-                            category.id,
-                    ),
+                (current) => current
+                    ? {
+                        ...current,
+                        data: current.data.filter(
+                            (item) =>
+                                item.id !==
+                                category.id,
+                        ),
+                    }
+                    : current,
             )
+
+            void queryClient.invalidateQueries({
+                queryKey: queryKeys.categoryCatalog(
+                    tenantId,
+                ),
+            })
+
+            void queryClient.invalidateQueries({
+                queryKey: queryKeys.categories(
+                    tenantId,
+                ),
+            })
         } catch {
             setActionError(
                 'No se pudo eliminar la categoría. Puede tener productos asociados.',
@@ -171,15 +212,17 @@ export function CategoriesTab() {
          * usando la categoría devuelta
          * por Laravel.
          */
-        queryClient.setQueryData<
-            Category[]
-        >(
-            queryKeys.categories(
+        queryClient.setQueryData<CategoriesResponse>(
+            queryKeys.categoryCatalog(
                 tenantId,
             ),
-            (current = []) => {
+            (current) => {
+                if (!current) {
+                    return current
+                }
+
                 const exists =
-                    current.some(
+                    current.data.some(
                         (category) =>
                             category.id ===
                             savedCategory.id,
@@ -187,7 +230,7 @@ export function CategoriesTab() {
 
                 const next =
                     exists
-                        ? current.map(
+                        ? current.data.map(
                             (category) =>
                                 category.id ===
                                     savedCategory.id
@@ -195,29 +238,44 @@ export function CategoriesTab() {
                                     : category,
                         )
                         : [
-                            ...current,
+                            ...current.data,
                             savedCategory,
                         ]
 
-                return next.sort(
-                    (a, b) => {
-                        if (
-                            a.sort_order !==
-                            b.sort_order
-                        ) {
-                            return (
-                                a.sort_order -
+                return {
+                    ...current,
+                    data: next.sort(
+                        (a, b) => {
+                            if (
+                                a.sort_order !==
                                 b.sort_order
-                            )
-                        }
+                            ) {
+                                return (
+                                    a.sort_order -
+                                    b.sort_order
+                                )
+                            }
 
-                        return a.name.localeCompare(
-                            b.name,
-                        )
-                    },
-                )
+                            return a.name.localeCompare(
+                                b.name,
+                            )
+                        },
+                    ),
+                }
             },
         )
+
+        void queryClient.invalidateQueries({
+            queryKey: queryKeys.categoryCatalog(
+                tenantId,
+            ),
+        })
+
+        void queryClient.invalidateQueries({
+            queryKey: queryKeys.categories(
+                tenantId,
+            ),
+        })
 
         setSelectedCategory(null)
         setActionError(null)
@@ -225,7 +283,7 @@ export function CategoriesTab() {
 
     if (
         isPending &&
-        categories.length === 0
+        !categoriesResult
     ) {
         return (
             <CategoriesSkeleton />
@@ -233,7 +291,7 @@ export function CategoriesTab() {
     }
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                     <h1 className="text-xl font-semibold tracking-tight">
@@ -246,6 +304,9 @@ export function CategoriesTab() {
                 </div>
 
                 <Button
+                    size="sm"
+                    disabled={!canCreateCategory}
+                    title={!canCreateCategory ? 'Tu plan actual ya alcanzó el cupo de categorías operativas.' : undefined}
                     onClick={handleCreate}
                 >
                     <PlusIcon className="size-4" />
@@ -253,6 +314,13 @@ export function CategoriesTab() {
                     Categoría
                 </Button>
             </div>
+
+            {plan && usage && (
+                <CategoryUsageCard
+                    plan={plan}
+                    usage={usage}
+                />
+            )}
 
             {queryError && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -267,8 +335,17 @@ export function CategoriesTab() {
                 </div>
             )}
 
+            {hasLockedCategories && (
+                <div className="rounded-md border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                    Algunas categorías están bloqueadas por tu plan actual. Reactiva o sube tu plan para volver a editarlas o usarlas.
+                </div>
+            )}
+
             {categories.length === 0 ? (
                 <EmptyCategories
+                    canCreate={
+                        canCreateCategory
+                    }
                     onCreate={
                         handleCreate
                     }
@@ -365,8 +442,10 @@ function CategoryRow({
     onEdit: () => void
     onDelete: () => void
 }) {
+    const locked = category.locked_by_plan
+
     return (
-        <TableRow className="group">
+        <TableRow className={locked ? 'group bg-muted/20' : 'group'}>
             <TableCell className="py-4 pl-5">
                 <div className="flex items-center gap-3">
                     <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
@@ -378,9 +457,20 @@ function CategoryRow({
                             {category.name}
                         </p>
 
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                            Categoría de productos
-                        </p>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <p className="text-xs text-muted-foreground">
+                                Categoría de productos
+                            </p>
+
+                            {locked && (
+                                <Badge
+                                    variant="outline"
+                                    className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground"
+                                >
+                                    Bloqueada por plan
+                                </Badge>
+                            )}
+                        </div>
                     </div>
                 </div>
             </TableCell>
@@ -397,15 +487,19 @@ function CategoryRow({
                     <span
                         className={[
                             'mr-1.5 size-1.5 rounded-full',
-                            category.is_active
-                                ? 'bg-emerald-500'
-                                : 'bg-muted-foreground/50',
+                            locked
+                                ? 'bg-amber-500'
+                                : category.is_active
+                                    ? 'bg-emerald-500'
+                                    : 'bg-muted-foreground/50',
                         ].join(' ')}
                     />
 
-                    {category.is_active
-                        ? 'Activa'
-                        : 'Inactiva'}
+                    {locked
+                        ? 'Bloqueada'
+                        : category.is_active
+                            ? 'Activa'
+                            : 'Inactiva'}
                 </Badge>
             </TableCell>
 
@@ -425,7 +519,7 @@ function CategoryRow({
                             size="icon"
                             className="size-8"
                             disabled={
-                                deleting
+                                deleting || locked
                             }
                         >
                             <MoreHorizontalIcon className="size-4" />
@@ -441,6 +535,7 @@ function CategoryRow({
                         className="w-40"
                     >
                         <DropdownMenuItem
+                            disabled={locked}
                             onClick={onEdit}
                         >
                             Editar
@@ -451,7 +546,7 @@ function CategoryRow({
                         <DropdownMenuItem
                             variant="destructive"
                             disabled={
-                                deleting
+                                deleting || locked
                             }
                             onClick={onDelete}
                         >
@@ -467,17 +562,19 @@ function CategoryRow({
 }
 
 function EmptyCategories({
+    canCreate,
     onCreate,
 }: {
+    canCreate: boolean
     onCreate: () => void
 }) {
     return (
-        <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed bg-muted/10 px-6 py-10 text-center">
-            <div className="flex size-12 items-center justify-center rounded-xl bg-muted">
+        <div className="flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed bg-muted/10 p-8 text-center">
+            <div className="flex size-11 items-center justify-center rounded-xl bg-muted">
                 <TagsIcon className="size-5 text-muted-foreground" />
             </div>
 
-            <h3 className="mt-4 text-sm font-semibold">
+            <h3 className="mt-4 text-sm font-medium">
                 Aún no tienes
                 categorías
             </h3>
@@ -490,10 +587,12 @@ function EmptyCategories({
             </p>
 
             <Button
+                size="sm"
                 className="mt-5"
+                disabled={!canCreate}
                 onClick={onCreate}
             >
-                <PlusIcon className="mr-2 size-4" />
+                <PlusIcon className="size-4" />
 
                 Crear categoría
             </Button>

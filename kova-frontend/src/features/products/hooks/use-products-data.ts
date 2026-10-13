@@ -61,6 +61,10 @@ export function useProductsData(
         productsResult?.meta?.usage ??
         null
 
+    const categoryUsage =
+        productsResult?.meta?.category_usage ??
+        null
+
     const hasError =
         categoriesQuery.isError ||
         productsQuery.isError
@@ -87,6 +91,7 @@ export function useProductsData(
         products,
         plan,
         usage,
+        categoryUsage,
         hasError,
         isLoading,
         refetchAll,

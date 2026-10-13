@@ -3,6 +3,7 @@ import {
     MoreHorizontalIcon,
 } from 'lucide-react'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
     Card,
@@ -33,8 +34,13 @@ export function ProductCard({
     onEdit,
     onDelete,
 }: ProductCardProps) {
+    const locked = product.locked_by_plan
+
     return (
-        <Card className="group overflow-hidden p-0 transition-shadow hover:shadow-sm">
+        <Card className={[
+            'group overflow-hidden p-0 transition-shadow hover:shadow-sm',
+            locked ? 'bg-muted/20 opacity-80' : '',
+        ].join(' ')}>
             <div className="relative aspect-[4/3] overflow-hidden bg-muted">
                 {product.image_path ? (
                     <img
@@ -57,7 +63,7 @@ export function ProductCard({
                                 variant="secondary"
                                 size="icon"
                                 className="size-7 shadow-sm"
-                                disabled={deleting}
+                                disabled={deleting || locked}
                             >
                                 <MoreHorizontalIcon className="size-4" />
 
@@ -72,6 +78,7 @@ export function ProductCard({
                             className="w-40"
                         >
                             <DropdownMenuItem
+                                disabled={locked}
                                 onClick={onEdit}
                             >
                                 Editar
@@ -81,7 +88,7 @@ export function ProductCard({
 
                             <DropdownMenuItem
                                 variant="destructive"
-                                disabled={deleting}
+                                disabled={deleting || locked}
                                 onClick={onDelete}
                             >
                                 {deleting
@@ -102,9 +109,20 @@ export function ProductCard({
                         {product.name}
                     </h3>
 
-                    <p className="truncate text-xs text-muted-foreground">
-                        {product.category.name}
-                    </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <p className="truncate text-xs text-muted-foreground">
+                            {product.category.name}
+                        </p>
+
+                        {locked && (
+                            <Badge
+                                variant="outline"
+                                className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground"
+                            >
+                                Bloqueado por plan
+                            </Badge>
+                        )}
+                    </div>
                 </div>
 
                 {product.description && (
@@ -123,20 +141,26 @@ export function ProductCard({
                     <span
                         role="status"
                         title={
-                            product.is_active
-                                ? 'Activo'
-                                : 'Inactivo'
+                            locked
+                                ? 'Bloqueado por plan'
+                                : product.is_active
+                                    ? 'Activo'
+                                    : 'Inactivo'
                         }
                         aria-label={
-                            product.is_active
-                                ? 'Producto activo'
-                                : 'Producto inactivo'
+                            locked
+                                ? 'Producto bloqueado por plan'
+                                : product.is_active
+                                    ? 'Producto activo'
+                                    : 'Producto inactivo'
                         }
                         className={[
                             'size-2.5 shrink-0 rounded-full ring-2 ring-background',
-                            product.is_active
-                                ? 'bg-emerald-500'
-                                : 'bg-muted-foreground/30',
+                            locked
+                                ? 'bg-amber-500'
+                                : product.is_active
+                                    ? 'bg-emerald-500'
+                                    : 'bg-muted-foreground/30',
                         ].join(' ')}
                     />
                 </div>

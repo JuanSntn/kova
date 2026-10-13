@@ -5,13 +5,17 @@ namespace App\Services\Pos;
 use App\Models\Category;
 use App\Models\Tenant;
 use App\Services\Plans\PlanLimitService;
+use App\Services\Subscriptions\CatalogAccessService;
+use App\Services\Subscriptions\EntitlementService;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 final class CategoryService
 {
     public function __construct(
         private readonly PlanLimitService $limits,
+        private readonly CatalogAccessService $catalogAccess,
     ) {}
 
     public function list(
@@ -24,7 +28,27 @@ final class CategoryService
             ->get();
     }
 
-    public function create(
+    public function operationalList(Tenant $tenant): Collection
+    {
+        return $tenant->categories()
+            ->where('is_active', true)
+            ->where('billing_enabled', true)
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get();
+    }
+
+    public function create(Tenant $tenant, array $data): Category
+    {
+        return DB::transaction(function () use ($tenant, $data) {
+            Tenant::whereKey($tenant->id)->lockForUpdate()->firstOrFail();
+            app(EntitlementService::class)->assertWritable($tenant);
+
+            return $this->createWithinLimit($tenant, $data);
+        });
+    }
+
+    private function createWithinLimit(
         Tenant $tenant,
         array $data
     ): Category {
@@ -48,15 +72,14 @@ final class CategoryService
         return $tenant
             ->categories()
             ->create([
-                'name' =>
-                trim($data['name']),
+                'name' => trim($data['name']),
 
-                'sort_order' =>
-                $data['sort_order'] ?? 0,
+                'sort_order' => $data['sort_order'] ?? 0,
 
-                'is_active' =>
-                $data['is_active'] ?? true,
-            ]);
+                'is_active' => $data['is_active'] ?? true,
+
+                'billing_enabled' => true,
+            ])->refresh();
     }
 
     public function update(
@@ -64,6 +87,10 @@ final class CategoryService
         Category $category,
         array $data
     ): Category {
+        $this->catalogAccess->assertCategoryMutable(
+            $category
+        );
+
         if (isset($data['name'])) {
             $this->assertUniqueName(
                 tenant: $tenant,
@@ -86,10 +113,13 @@ final class CategoryService
     public function delete(
         Category $category
     ): void {
+        $this->catalogAccess->assertCategoryMutable(
+            $category
+        );
+
         if ($category->products()->exists()) {
             throw ValidationException::withMessages([
-                'category' =>
-                'La categoría tiene productos asociados.',
+                'category' => 'La categoría tiene productos asociados.',
             ]);
         }
 
@@ -129,8 +159,7 @@ final class CategoryService
 
         if ($query->exists()) {
             throw ValidationException::withMessages([
-                'name' =>
-                'Ya existe una categoría con este nombre.',
+                'name' => 'Ya existe una categoría con este nombre.',
             ]);
         }
     }

@@ -70,6 +70,18 @@ export type TicketCapabilities = {
 }
 
 export type TicketSettingsMeta = {
+    invoice_qr: {
+        ready: boolean
+        enabled: boolean
+        requested: boolean
+        code: string
+        message: string
+        fiscal_ready: boolean
+        branches_ready: boolean
+        fiscal_url: string
+        branches_url: string
+        missing_branches: { id: string; name: string; missing_fields: string[] }[]
+    }
     configuration_ready: boolean
 
     missing_business_fields:

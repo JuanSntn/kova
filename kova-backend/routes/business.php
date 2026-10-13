@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware([
     'auth:sanctum',
-    'verified',
+    'account-access',
     'tenant',
 ])
     ->prefix('settings')

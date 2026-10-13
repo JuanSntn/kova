@@ -20,6 +20,7 @@ export const api = axios.create({
 
 let activeTenantId:
   string | null = null
+let activeBranchId: string | null = null
 
 export function setApiTenantId(
   tenantId: string | null,
@@ -27,6 +28,8 @@ export function setApiTenantId(
   activeTenantId =
     tenantId
 }
+
+export function setApiBranchId(branchId: string | null) { activeBranchId = branchId }
 
 // @deprecated Usa setApiTenantId en su lugar
 export function setActiveTenantId(
@@ -52,17 +55,20 @@ api.interceptors.request.use(
     if (
       isApiRequest &&
       !isAuthRequest &&
-      activeTenantId
+      (activeTenantId || config.headers.has('X-Tenant-ID'))
     ) {
       config.headers.set(
         'X-Tenant-ID',
-        activeTenantId,
+        config.headers.get('X-Tenant-ID') ?? activeTenantId,
       )
     } else {
       config.headers.delete(
         'X-Tenant-ID',
       )
     }
+
+    if (isApiRequest && !isAuthRequest && (activeBranchId || config.headers.has('X-Branch-ID'))) config.headers.set('X-Branch-ID', config.headers.get('X-Branch-ID') ?? activeBranchId)
+    else config.headers.delete('X-Branch-ID')
 
     /*
      * NO establecer Content-Type aquí.
@@ -101,6 +107,7 @@ api.interceptors.response.use(
       setApiTenantId(
         null,
       )
+      setApiBranchId(null)
 
       window.dispatchEvent(
         new CustomEvent(

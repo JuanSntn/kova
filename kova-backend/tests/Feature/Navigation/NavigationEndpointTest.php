@@ -4,7 +4,6 @@ namespace Tests\Feature\Navigation;
 
 use App\Domain\Tenancy\Actions\CreateTenant;
 use App\Enums\MembershipStatus;
-use App\Enums\PlanCode;
 use App\Enums\RoleName;
 use App\Models\Membership;
 use App\Models\Plan;
@@ -51,12 +50,15 @@ class NavigationEndpointTest extends TestCase
             ->assertJsonPath('sections.2.key', 'catalog')
             ->assertJsonPath('sections.3.key', 'settings')
             ->assertJsonPath('sections.2.items.0.key', 'menu')
-            ->assertJsonPath('sections.3.items.0.key', 'taxes')
-            ->assertJsonPath('sections.3.items.1.key', 'billing')
+            ->assertJsonPath('sections.3.items.1.key', 'branches-settings')
+            ->assertJsonPath('sections.3.items.3.key', 'users-settings')
+            ->assertJsonPath('sections.3.items.4.key', 'taxes')
+            ->assertJsonPath('sections.3.items.5.key', 'fiscal-settings')
+            ->assertJsonPath('sections.3.items.6.key', 'billing')
             ->assertJsonMissingPath('sections.0.items.0.permission');
     }
 
-    public function test_cashier_sees_only_unrestricted_navigation_items(): void
+    public function test_cashier_sees_only_dashboard_and_authorized_sales_items(): void
     {
         [$owner, $tenant] = $this->provisionOwner();
         $cashier = User::factory()->create([
@@ -81,11 +83,18 @@ class NavigationEndpointTest extends TestCase
             ->getJson('/api/navigation')
             ->assertOk()
             ->assertJsonPath('sections.0.key', 'main')
-            ->assertJsonPath('sections.1.key', 'sales')
             ->assertJsonPath('sections.0.items.0.key', 'dashboard')
+            ->assertJsonPath('sections.1.key', 'sales')
             ->assertJsonPath('sections.1.items.0.key', 'pos')
-            ->assertJsonMissingPath('sections.2')
-            ->assertJsonMissingPath('sections.3');
+            ->assertJsonPath('sections.1.items.1.key', 'cash')
+            ->assertJsonMissingPath('sections.1.items.2')
+            ->assertJsonCount(2, 'sections')
+            ->assertJsonMissingPath('sections.1.items.0.permission');
+
+        $this->getJson('/api/pos/sales')->assertForbidden();
+        $this->getJson('/api/pos/sales/summary')->assertForbidden();
+        $this->getJson('/api/auth/me')->assertOk()
+            ->assertJsonPath('tenants.0.can_select_branch', false);
 
         $this->assertNotNull($owner);
     }
@@ -114,7 +123,7 @@ class NavigationEndpointTest extends TestCase
             'email' => $email,
             'email_verified_at' => now(),
         ]);
-        $plan = Plan::query()->where('code', PlanCode::Free->value)->sole();
+        $plan = Plan::factory()->create();
         $tenant = app(CreateTenant::class)->handle(
             $owner,
             $plan,

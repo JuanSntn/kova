@@ -4,6 +4,10 @@ import {
 } from 'lucide-react'
 
 import {
+    ticketSettingsQueryKeys,
+} from '@/features/settings/tickets/query-keys'
+
+import {
     useMutation,
     useQuery,
     useQueryClient,
@@ -67,7 +71,7 @@ export function BusinessSettingsPage() {
             mutationFn:
                 updateBusinessProfile,
 
-            onSuccess: (
+            onSuccess: async (
                 profile,
             ) => {
                 queryClient.setQueryData(
@@ -76,6 +80,13 @@ export function BusinessSettingsPage() {
                     ),
                     profile,
                 )
+
+                await queryClient.invalidateQueries({
+                    queryKey:
+                        ticketSettingsQueryKeys.detail(
+                            tenantId,
+                        ),
+                })
             },
         })
 

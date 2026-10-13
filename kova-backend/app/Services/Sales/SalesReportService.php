@@ -2,8 +2,8 @@
 
 namespace App\Services\Sales;
 
-use App\Enums\PlanCode;
 use App\Models\Tenant;
+use App\Models\Branch;
 use App\Services\Plans\TenantPlanService;
 use Illuminate\Support\Facades\DB;
 
@@ -16,23 +16,20 @@ final class SalesReportService
 
     public function summary(
         Tenant $tenant,
+        Branch $branch,
     ): array {
         $plan = $this->plans->current(
             $tenant
         );
 
-        $planCode = $plan->code instanceof PlanCode
-            ? $plan->code
-            : PlanCode::from(
-                (string) $plan->code
-            );
+        $planCode = (string) $plan->code;
 
         $period = $this->periods->current(
             tenant: $tenant,
             plan: $plan,
         );
 
-        $timezone = $tenant->timezone
+        $timezone = $branch->timezone ?: $tenant->timezone
             ?: config(
                 'app.timezone',
                 'UTC'
@@ -43,6 +40,7 @@ final class SalesReportService
          */
         $orders = $tenant
             ->orders()
+            ->where('branch_id', $branch->id)
             ->where('status', 'paid')
             ->whereNotNull('paid_at')
             ->where(
@@ -98,6 +96,7 @@ final class SalesReportService
                 'orders.tenant_id',
                 $tenant->id,
             )
+            ->where('orders.branch_id', $branch->id)
             ->where(
                 'orders.status',
                 'paid',
@@ -130,15 +129,12 @@ final class SalesReportService
             ->limit(5)
             ->get()
             ->map(
-                fn($item) => [
-                    'name' =>
-                    $item->name,
+                fn ($item) => [
+                    'name' => $item->name,
 
-                    'units' =>
-                    (int) $item->units,
+                    'units' => (int) $item->units,
 
-                    'sales_total' =>
-                    round(
+                    'sales_total' => round(
                         (float) $item->sales_total,
                         2,
                     ),
@@ -155,52 +151,49 @@ final class SalesReportService
                 'card',
                 'transfer',
             ])
-            ->map(
-                function (
-                    string $method
-                ) use (
-                    $orders,
-                    $transactionCount
-                ): array {
-                    $methodOrders =
-                        $orders->where(
-                            'payment_method',
-                            $method,
-                        );
+                ->map(
+                    function (
+                        string $method
+                    ) use (
+                        $orders,
+                        $transactionCount
+                    ): array {
+                        $methodOrders =
+                            $orders->where(
+                                'payment_method',
+                                $method,
+                            );
 
-                    $transactions =
-                        $methodOrders->count();
+                        $transactions =
+                            $methodOrders->count();
 
-                    return [
-                        'method' => $method,
+                        return [
+                            'method' => $method,
 
-                        'transactions' =>
-                        $transactions,
+                            'transactions' => $transactions,
 
-                        'percentage' =>
-                        $transactionCount > 0
-                            ? round(
-                                (
-                                    $transactions
-                                    / $transactionCount
-                                ) * 100,
+                            'percentage' => $transactionCount > 0
+                                ? round(
+                                    (
+                                        $transactions
+                                        / $transactionCount
+                                    ) * 100,
+                                    2,
+                                )
+                                : 0,
+
+                            'sales_total' => round(
+                                (float) $methodOrders
+                                    ->sum('total'),
                                 2,
-                            )
-                            : 0,
-
-                        'sales_total' =>
-                        round(
-                            (float) $methodOrders
-                                ->sum('total'),
-                            2,
-                        ),
-                    ];
-                }
-            )
-            ->sortByDesc(
-                'transactions'
-            )
-            ->values();
+                            ),
+                        ];
+                    }
+                )
+                ->sortByDesc(
+                    'transactions'
+                )
+                ->values();
 
         /*
          * Ventas por día.
@@ -219,8 +212,8 @@ final class SalesReportService
 
         $periodEndLocal =
             $period['ends_at']
-            ->copy()
-            ->timezone($timezone);
+                ->copy()
+                ->timezone($timezone);
 
         $today = now($timezone);
 
@@ -230,8 +223,8 @@ final class SalesReportService
             )
             ? $today->copy()->endOfDay()
             : $periodEndLocal
-            ->copy()
-            ->subSecond();
+                ->copy()
+                ->subSecond();
 
         while (
             $cursor->lessThanOrEqualTo(
@@ -314,57 +307,42 @@ final class SalesReportService
             'timezone' => $timezone,
 
             'plan' => [
-                'code' =>
-                $planCode->value,
+                'code' => $planCode,
 
-                'name' =>
-                $plan->name,
+                'name' => $plan->name,
             ],
 
             'period' => [
-                'type' =>
-                $period['type'],
+                'type' => $period['type'],
 
-                'starts_at' =>
-                $period['starts_at']
+                'starts_at' => $period['starts_at']
                     ->toIso8601String(),
 
-                'ends_at' =>
-                $period['ends_at']
+                'ends_at' => $period['ends_at']
                     ->toIso8601String(),
             ],
 
             'metrics' => [
-                'total_sales' =>
-                $totalSales,
+                'total_sales' => $totalSales,
 
-                'transaction_count' =>
-                $transactionCount,
+                'transaction_count' => $transactionCount,
 
-                'average_ticket' =>
-                $averageTicket,
+                'average_ticket' => $averageTicket,
 
-                'sales_limit' =>
-                $salesLimit,
+                'sales_limit' => $salesLimit,
 
-                'sales_limit_used' =>
-                $totalSales,
+                'sales_limit_used' => $totalSales,
 
-                'sales_limit_remaining' =>
-                $remaining,
+                'sales_limit_remaining' => $remaining,
 
-                'sales_limit_percentage' =>
-                $percentage,
+                'sales_limit_percentage' => $percentage,
             ],
 
-            'top_products' =>
-            $topProducts,
+            'top_products' => $topProducts,
 
-            'payment_methods' =>
-            $paymentMethods,
+            'payment_methods' => $paymentMethods,
 
-            'sales_by_day' =>
-            array_values(
+            'sales_by_day' => array_values(
                 $salesByDay
             ),
         ];

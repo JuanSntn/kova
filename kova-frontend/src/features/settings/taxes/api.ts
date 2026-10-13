@@ -5,7 +5,7 @@ import { api } from '@/lib/api'
 import type {
     Tax,
     TaxConfig,
-    TaxPayload,
+    TaxUpdatePayload,
 } from './types'
 
 type DataResponse<T> = {
@@ -35,21 +35,9 @@ export async function getTaxConfig(): Promise<TaxConfig> {
     return response.data.data
 }
 
-export async function createTax(
-    payload: TaxPayload,
-): Promise<Tax> {
-    const response =
-        await api.post<DataResponse<Tax>>(
-            '/api/settings/taxes',
-            payload,
-        )
-
-    return response.data.data
-}
-
 export async function updateTax(
     taxId: string,
-    payload: Partial<TaxPayload>,
+    payload: TaxUpdatePayload,
 ): Promise<Tax> {
     const response =
         await api.put<DataResponse<Tax>>(

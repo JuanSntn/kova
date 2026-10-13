@@ -1,15 +1,20 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import {
   BookOpenIcon,
+  ChefHatIcon,
   Building2Icon,
   ChartNoAxesCombinedIcon,
   CreditCardIcon,
+  FileBadgeIcon,
   LayoutDashboardIcon,
   PackageIcon,
   PercentIcon,
   ReceiptTextIcon,
   ShoppingCartIcon,
+  StoreIcon,
   TagsIcon,
+  UsersIcon,
+  WalletIcon,
 } from 'lucide-react'
 
 import {
@@ -24,14 +29,19 @@ import type { NavigationSection } from '@/features/navigation/types'
 const iconMap = {
   'book-open': BookOpenIcon,
   'building-2': Building2Icon,
+  'chef-hat': ChefHatIcon,
   'chart-no-axes-combined': ChartNoAxesCombinedIcon,
   'credit-card': CreditCardIcon,
+  'file-badge': FileBadgeIcon,
   'layout-dashboard': LayoutDashboardIcon,
   package: PackageIcon,
   percent: PercentIcon,
   'receipt-text': ReceiptTextIcon,
   'shopping-cart': ShoppingCartIcon,
+  store: StoreIcon,
   tags: TagsIcon,
+  users: UsersIcon,
+  wallet: WalletIcon,
 } as const
 
 export function NavMain({

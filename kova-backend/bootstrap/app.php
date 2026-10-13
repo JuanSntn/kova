@@ -1,8 +1,11 @@
 <?php
 
 use App\Http\Middleware\ResolveTenant;
+use App\Http\Middleware\ResolveBranch;
+use App\Http\Middleware\EnsureAccountAccess;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SetRequestContext;
+use App\Exceptions\DomainConflictException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -31,11 +34,26 @@ return Application::configure(basePath: dirname(__DIR__))
             ResolveTenant::class,
         );
 
+        $middleware->prependToPriorityList(
+            ResolveTenant::class,
+            \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
+        );
+
+        $middleware->prependToPriorityList(
+            ResolveTenant::class,
+            EnsureAccountAccess::class,
+        );
+
         $middleware->alias([
             'tenant' => ResolveTenant::class,
+            'branch' => ResolveBranch::class,
+            'account-access' => EnsureAccountAccess::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->render(fn (DomainConflictException $e, Request $request) => $request->is('api/*') ? response()->json(['message' => $e->getMessage(), 'code' => $e->domainCode], 409) : null);
+        $exceptions->render(fn (DomainException $e, Request $request) => $request->is('api/*') ? response()->json(['message' => $e->getMessage()], 409) : null);
+        $exceptions->render(fn (\App\Exceptions\BillingVerificationUnavailableException $e, Request $request) => $request->is('api/*') ? response()->json(['message' => $e->getMessage(), 'code' => 'billing_verification_unavailable'], 503) : null);
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*'),
         );

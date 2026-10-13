@@ -3,9 +3,13 @@ export type PosCategory = {
     name: string
     sort_order: number
     is_active: boolean
+    billing_enabled: boolean
+    locked_by_plan: boolean
+    can_use: boolean
 }
 
 export type PosProduct = {
+    modifier_groups?: import('@/features/modifiers/types').ProductModifierGroup[]
     id: string
     name: string
     description: string | null
@@ -20,9 +24,17 @@ export type PosProduct = {
 
     is_active: boolean
 
+    billing_enabled: boolean
+
+    locked_by_plan: boolean
+
+    can_use: boolean
+
     category: {
         id: string
         name: string
+        billing_enabled: boolean
+        locked_by_plan: boolean
     }
 }
 
@@ -147,9 +159,11 @@ export type PosCartTotals = {
 export type CreatePosOrderItemPayload = {
     product_id: string
     quantity: number
+    modifiers?: string[]
 }
 
 export type CreatePosOrderPayload = {
+    quote_token: string
     order_type:
     'counter'
 
@@ -157,13 +171,15 @@ export type CreatePosOrderPayload = {
     PosPaymentMethod
 
     amount_received?:
-    number
+    number | string
 
     items:
     CreatePosOrderItemPayload[]
 }
 
 export type PosCreatedOrder = {
+    inventory_warnings?: string[]
+    items: Array<{ product_id: string | null; product_name: string; unit_price: string; quantity: number; line_total: string; modifiers?: import('@/features/modifiers/types').ModifierSnapshot[] }>
     id: string
 
     folio?:
@@ -206,6 +222,17 @@ export type PosCreatedOrder = {
     | string
     | number
     | null
+}
+
+export type CheckoutContext = { tenant: string; branch: string; membership: string }
+export type CheckoutQuote = {
+    quote_token: string
+    expires_at: number
+    subtotal: string
+    total: string
+    tax_base_total: string
+    tax_total: string
+    lines: Array<{ product_id: string; product_name_snapshot: string; unit_price_snapshot: string; quantity: number; line_total: string; modifiers_snapshot?: import('@/features/modifiers/types').ModifierSnapshot[] }>
 }
 
 export type PosOrderResponse = {

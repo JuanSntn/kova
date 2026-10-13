@@ -2,41 +2,23 @@
 
 namespace App\Services\Billing;
 
+use App\Models\BillingPriceMapping;
 use App\Models\Plan;
+use App\Models\PlanPrice;
 use Illuminate\Support\Collection;
 
 final class BillingPlanResolver
 {
-    /**
-     * @var Collection<string, Plan>|null
-     */
-    private ?Collection $plansByCode = null;
-
-    /**
-     * @param array<int, string> $priceIds
-     */
-    public function resolveByPriceIds(array $priceIds): ?Plan
+    public function resolveByPriceIds(array $ids): ?Plan
     {
-        if ($priceIds === []) {
-            return null;
-        }
+        $mapping = BillingPriceMapping::whereIn('stripe_price_id', $ids)->whereNotNull('plan_price_id')->first();
 
-        foreach (config('billing.plans', []) as $planCode => $configuration) {
-            $configuredPriceId = $configuration['price'] ?? null;
-
-            if (! $configuredPriceId || ! in_array($configuredPriceId, $priceIds, true)) {
-                continue;
-            }
-
-            return $this->findByCode((string) $planCode);
-        }
-
-        return null;
+        return $mapping ? PlanPrice::find($mapping->plan_price_id)?->version?->plan : null;
     }
 
     public function findByCode(string $code): ?Plan
     {
-        return $this->plansByCode()->get($code);
+        return Plan::where('code', $code)->first();
     }
 
     public function freePlan(): ?Plan
@@ -44,31 +26,8 @@ final class BillingPlanResolver
         return $this->findByCode('free');
     }
 
-    /**
-     * @return Collection<int, Plan>
-     */
     public function activePlans(): Collection
     {
-        return $this->plansByCode()
-            ->values()
-            ->filter(fn (Plan $plan): bool => (bool) $plan->is_active)
-            ->sortBy('monthly_price')
-            ->values();
-    }
-
-    /**
-     * @return Collection<string, Plan>
-     */
-    private function plansByCode(): Collection
-    {
-        if ($this->plansByCode !== null) {
-            return $this->plansByCode;
-        }
-
-        $this->plansByCode = Plan::query()
-            ->get()
-            ->keyBy(fn (Plan $plan): string => $plan->code->value);
-
-        return $this->plansByCode;
+        return Plan::where('is_active', true)->get();
     }
 }
